@@ -17,7 +17,7 @@ from app.redis_client import redis_client as _  # Redis pre-init
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="CampusQA", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title="DocQA", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
 
 app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -34,7 +34,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
     if isinstance(exc, SQLAlchemyError):
         message = (
-            "数据库操作失败。请确认 MySQL 已启动、campus_qa 库存在，"
+            "数据库操作失败。请确认 MySQL 已启动、doc_qa 库存在，"
             "并且在 backend 目录执行过 alembic upgrade head（版本升级后表结构需要迁移）。"
         )
     else:
@@ -68,7 +68,7 @@ def health_check():
         "code": 200,
         "message": "success",
         "data": {
-            "service": "CampusQA",
+            "service": "DocQA",
             "version": "1.0.0",
             "status": "running",
         },

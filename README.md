@@ -1,6 +1,6 @@
-# CampusQA
+# DocQA
 
-[![CI](https://github.com/Nanoda16/CampusQA/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanoda16/CampusQA/actions/workflows/ci.yml)
+[![CI](https://github.com/Nanoda16/docqa/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanoda16/docqa/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -61,7 +61,7 @@ cp backend/.env.example backend/.env
 在 MySQL 里建空库，后端首次启动会自动建表（老库升级在 `backend/` 下跑 `alembic upgrade head`）：
 
 ```sql
-CREATE DATABASE IF NOT EXISTS campus_qa DEFAULT CHARSET utf8mb4;
+CREATE DATABASE IF NOT EXISTS doc_qa DEFAULT CHARSET utf8mb4;
 ```
 
 ### 2. 启动三个进程

@@ -11,7 +11,7 @@ strict = false
 ignore_missing_imports = true
 
 [project]
-name = "campus-qa-backend"
+name = "docqa-backend"
 version = "1.0.0"
 description = "RAG-based Knowledge Base Q&A System"
 requires-python = ">=3.11"

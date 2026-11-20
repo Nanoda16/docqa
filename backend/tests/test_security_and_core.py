@@ -1,4 +1,4 @@
-"""CampusQA 后端核心安全与业务逻辑回归测试（纯内存 SQLite，零外部 MySQL/Redis 依赖）。"""
+"""DocQA 后端核心安全与业务逻辑回归测试（纯内存 SQLite，零外部 MySQL/Redis 依赖）。"""
 
 from __future__ import annotations
 

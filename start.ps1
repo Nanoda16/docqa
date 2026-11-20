@@ -1,4 +1,4 @@
-# CampusQA Launcher - Parallel start
+# DocQA Launcher - Parallel start
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backend = Join-Path $root "backend"
 $frontend = Join-Path $root "frontend"
@@ -6,7 +6,7 @@ $ai = Join-Path $root "ai_service"
 $dist = Join-Path $frontend "dist"
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "   CampusQA - RAG Knowledge Base Q&A Assistant" -ForegroundColor Cyan
+Write-Host "   DocQA - RAG Knowledge Base Q&A Assistant" -ForegroundColor Cyan
 Write-Host "   AI Service:  http://localhost:8003" -ForegroundColor Gray
 Write-Host "   Backend:     http://localhost:8002" -ForegroundColor Gray
 Write-Host "   Swagger:     http://localhost:8002/docs" -ForegroundColor Gray
@@ -63,6 +63,6 @@ if ($buildJob -and ($buildJob.State -eq 'Running')) {
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
-Write-Host "  CampusQA is running!" -ForegroundColor Green
+Write-Host "  DocQA is running!" -ForegroundColor Green
 Write-Host "  Close the two server windows to stop." -ForegroundColor Gray
 Write-Host "============================================" -ForegroundColor Green

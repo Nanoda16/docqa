@@ -15,7 +15,7 @@ class QACache:
 
     @staticmethod
     def _make_qa_key(user_id: int, question: str) -> str:
-        """生成问答缓存 key: campus:qa:qa:{user_id}:{question_short}:{hash_short}"""
+        """生成问答缓存 key: doc:qa:qa:{user_id}:{question_short}:{hash_short}"""
         q_hash = hashlib.md5(question.encode("utf-8")).hexdigest()
         question_short = question[:30].replace(":", "_")
         q_hash_short = q_hash[:8]
@@ -23,7 +23,7 @@ class QACache:
 
     @staticmethod
     def _make_session_key(session_id: str) -> str:
-        """生成会话缓存 key: campus:qa:session:{session_id}"""
+        """生成会话缓存 key: doc:qa:session:{session_id}"""
         return f"{PREFIX}session:{session_id}"
 
     @staticmethod

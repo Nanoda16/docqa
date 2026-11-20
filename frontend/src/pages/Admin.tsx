@@ -29,7 +29,7 @@ function Metric({
 export default function Admin() {
   const [stats, setStats] = useState<any>({});
   const [keys, setKeys] = useState<any[]>([]);
-  const [keyPattern, setKeyPattern] = useState('campus:qa:*');
+  const [keyPattern, setKeyPattern] = useState('doc:qa:*');
   const [warmupLimit, setWarmupLimit] = useState(10);
 
   useEffect(() => { loadCacheData(); const timer = setInterval(loadCacheData, 5000); return () => clearInterval(timer); }, []);

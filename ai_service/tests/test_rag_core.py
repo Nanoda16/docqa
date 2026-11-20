@@ -1,4 +1,4 @@
-"""CampusQA AI 微服务核心 RAG 引擎单元测试（纯离线，无需下载大模型权重）。"""
+"""DocQA AI 微服务核心 RAG 引擎单元测试（纯离线，无需下载大模型权重）。"""
 
 from __future__ import annotations
 

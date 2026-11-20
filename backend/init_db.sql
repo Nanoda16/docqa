@@ -1,13 +1,13 @@
 -- ============================================================
--- CampusQA 数据库初始化脚本
+-- DocQA 数据库初始化脚本
 -- 通用文档知识库 RAG 问答系统
 -- ============================================================
 
-CREATE DATABASE IF NOT EXISTS campus_qa
+CREATE DATABASE IF NOT EXISTS doc_qa
     DEFAULT CHARACTER SET utf8mb4
     DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE campus_qa;
+USE doc_qa;
 
 -- ============================================================
 -- 1. 系统用户表

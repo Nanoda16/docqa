@@ -5,9 +5,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.config import settings
 from app.deps import require_admin, success_response
 from app.redis_client import redis_client
 from app.services.user_service import UserService
+
+PREFIX = settings.CACHE_KEY_PREFIX
 
 # 用户名查询缓存（避免重复查库）
 _user_name_cache: dict[str, str] = {}
@@ -15,12 +18,15 @@ _user_name_cache: dict[str, str] = {}
 
 def _decode_key(key: str) -> str:
     """将原始缓存 key 转换为人类可读的描述。"""
-    if key.startswith("campus:qa:qa:"):
-        # 新格式: campus:qa:qa:{user_id}:{question_short}:{hash_short}
-        parts = key.split(":")
-        if len(parts) >= 6:
-            user_id = parts[3]
-            question = parts[4]
+    qa_prefix = f"{PREFIX}qa:"
+    session_prefix = f"{PREFIX}session:"
+    hot_prefix = f"{PREFIX}hot:"
+    if key.startswith(qa_prefix):
+        # 格式: {PREFIX}qa:{user_id}:{question_short}:{hash_short}
+        rest = key[len(qa_prefix):].split(":")
+        if len(rest) >= 3:
+            user_id = rest[0]
+            question = rest[1]
             if user_id not in _user_name_cache:
                 db = None
                 try:
@@ -37,10 +43,10 @@ def _decode_key(key: str) -> str:
                     if db is not None:
                         db.close()
             return f"{_user_name_cache[user_id]} 问: {question}"
-    elif key.startswith("campus:qa:session:"):
-        sid = key.replace("campus:qa:session:", "")
+    elif key.startswith(session_prefix):
+        sid = key[len(session_prefix):]
         return f"会话 {sid[-12:]}"
-    elif key.startswith("campus:qa:hot:"):
+    elif key.startswith(hot_prefix):
         return "热门问题统计"
     return key
 
@@ -111,11 +117,11 @@ def get_cache_stats(_=Depends(_require_admin)):
         stat["server_type"] = "fakeredis"
 
     # 按前缀统计 key 数量
-    prefixes = ["campus:qa:qa:*", "campus:qa:session:*", "campus:qa:hot:*"]
+    prefixes = [f"{PREFIX}qa:*", f"{PREFIX}session:*", f"{PREFIX}hot:*"]
     label_map = {
-        "campus:qa:qa:*": "Q&A 缓存",
-        "campus:qa:session:*": "会话缓存",
-        "campus:qa:hot:*": "热门问题",
+        f"{PREFIX}qa:*": "Q&A 缓存",
+        f"{PREFIX}session:*": "会话缓存",
+        f"{PREFIX}hot:*": "热门问题",
     }
     total_keys = 0
     keys_by_prefix = {}
@@ -146,7 +152,7 @@ def get_cache_stats(_=Depends(_require_admin)):
 
 @router.get("/cache/keys")
 def list_cache_keys(
-    pattern: str = "campus:qa:*",
+    pattern: str = f"{PREFIX}*",
     _=Depends(_require_admin),
 ):
     """列出所有缓存 key 及类型、TTL"""
@@ -179,7 +185,7 @@ def list_cache_keys(
 @router.delete("/cache/clear")
 def clear_all_cache(_=Depends(_require_admin)):
     """清除所有缓存数据"""
-    keys = _scan_keys("campus:qa:*")
+    keys = _scan_keys(f"{PREFIX}*")
     deleted = 0
     if keys:
         try:
@@ -197,7 +203,7 @@ def clear_all_cache(_=Depends(_require_admin)):
 @router.delete("/cache/clear/qa")
 def clear_qa_cache(_=Depends(_require_admin)):
     """清除 Q&A 回答缓存"""
-    keys = _scan_keys("campus:qa:qa:*")
+    keys = _scan_keys(f"{PREFIX}qa:*")
     deleted = 0
     if keys:
         try:
@@ -215,7 +221,7 @@ def clear_qa_cache(_=Depends(_require_admin)):
 @router.delete("/cache/clear/sessions")
 def clear_session_cache(_=Depends(_require_admin)):
     """清除会话缓存"""
-    keys = _scan_keys("campus:qa:session:*")
+    keys = _scan_keys(f"{PREFIX}session:*")
     deleted = 0
     if keys:
         try:
@@ -233,7 +239,7 @@ def clear_session_cache(_=Depends(_require_admin)):
 @router.delete("/cache/clear/hot")
 def clear_hot_cache(_=Depends(_require_admin)):
     """重置热门问题数据"""
-    keys = _scan_keys("campus:qa:hot:*")
+    keys = _scan_keys(f"{PREFIX}hot:*")
     deleted = 0
     if keys:
         try:

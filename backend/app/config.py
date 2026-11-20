@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DB_PORT: int = 3306
     DB_USER: str = "root"
     DB_PASSWORD: str = ""
-    DB_NAME: str = "campus_qa"
+    DB_NAME: str = "doc_qa"
 
     # AI 微服务地址与内部通信密钥（留空表示本地免密开发模式）
     AI_SERVICE_URL: str = "http://127.0.0.1:8003"
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
 
     # JWT 认证配置（生产环境请务必在 backend/.env 中配置强随机密钥）
-    JWT_SECRET_KEY: str = "campus-qa-dev-secret-change-in-production"
+    JWT_SECRET_KEY: str = "docqa-dev-secret-change-in-production"
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24小时
 
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # 缓存配置
     CACHE_EXPIRE_SECONDS: int = 600  # 默认缓存10分钟
-    CACHE_KEY_PREFIX: str = "campus:qa:"
+    CACHE_KEY_PREFIX: str = "doc:qa:"
 
     # 数据库连接字符串 (自动对用户名密码进行 URL 编码，防止含 @/#/% 特殊字符报错)
     @property
