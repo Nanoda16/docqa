@@ -53,19 +53,19 @@ class UserService:
             return None
 
     @staticmethod
-    def register(db: Session, data: UserCreate) -> User:
-        """用户注册"""
-        # 检查用户名是否已存在
+    def register(db: Session, data: UserCreate, *, allow_privileged_role: bool = False) -> User:
+        """用户注册（默认强制 student 角色，防止公开注册垂直越权为 admin）。"""
         existing = db.query(User).filter(User.username == data.username).first()
         if existing:
             raise ValueError("用户名已存在")
 
+        role = data.role if allow_privileged_role else "student"
         user = User(
             username=data.username,
             password_hash=UserService.hash_password(data.password),
             nickname=data.nickname or data.username,
             email=data.email,
-            role=data.role,
+            role=role,
         )
         db.add(user)
         db.commit()

@@ -41,9 +41,9 @@ def create_document(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """创建文档（自动触发向量化入库，返回 202 表示已接受处理）"""
-    doc = DocumentService.create(db, data, user_id)
-    # 自动触发异步入库
+    """创建文本文档（禁止客户端传入任意服务器 file_path，防任意文件读取入库）"""
+    safe_data = data.model_copy(update={"file_path": None, "status": DocumentStatus.UPLOADED})
+    doc = DocumentService.create(db, safe_data, user_id)
     IngestionService().enqueue(doc.id, db)
     return _success(
         data=DocumentResponse.model_validate(doc).model_dump(),
@@ -54,6 +54,7 @@ def create_document(
 # ── 上传限制 ──────────────────────────────────────────────
 _ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_UPLOAD_CHUNK_SIZE = 1024 * 1024   # 1 MB 分块读取，防止超大文件一次性读入内存导致 OOM
 
 
 @router.post("/upload", status_code=202)
@@ -65,7 +66,7 @@ def upload_document(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """上传文件并创建文档（自动触发向量化入库）"""
+    """上传文件并创建文档（流式分块限额 + 自动触发向量化入库）"""
     # 1. 验证扩展名（大小写不敏感）
     original_filename = file.filename or "untitled"
     stem, ext = os.path.splitext(original_filename)
@@ -76,21 +77,33 @@ def upload_document(
             detail=f"不支持的文件类型: {ext}，仅支持 pdf/doc/docx/txt",
         )
 
-    # 2. 读取文件内容并校验大小
-    content_bytes = file.file.read()
-    if len(content_bytes) > _MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail="文件大小超过 50MB 限制",
-        )
-
-    # 3. 保存文件到 uploads/ 目录
+    # 2. 流式分块写入临时 staging 文件并实时校验 50MB 上限，避免 OOM
     _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     safe_stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in stem)[:64]
     safe_name = f"{uuid.uuid4().hex}_{safe_stem}{ext_lower}"
     file_path = str((_UPLOAD_DIR / safe_name).resolve())
-    with open(file_path, "wb") as f:
-        f.write(content_bytes)
+
+    total_read = 0
+    txt_chunks: list[bytes] = []
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = file.file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_read += len(chunk)
+                if total_read > _MAX_FILE_SIZE:
+                    raise HTTPException(status_code=400, detail="文件大小超过 50MB 限制")
+                f.write(chunk)
+                if ext_lower == ".txt":
+                    txt_chunks.append(chunk)
+    except Exception:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        raise
 
     # 4. 确定文件类型与标题
     file_type = ext_lower.lstrip(".")
@@ -109,6 +122,7 @@ def upload_document(
 
     # 6. 对 .txt 文件直接读取内容（便于关键字搜索）
     if ext_lower == ".txt":
+        content_bytes = b"".join(txt_chunks)
         try:
             text_content = content_bytes.decode("utf-8")
         except UnicodeDecodeError:
@@ -181,10 +195,18 @@ def update_document(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """更新文档"""
-    doc = DocumentService.update(db, document_id, data)
-    if not doc:
+    """更新文档（仅创建者或管理员可更新，且禁止客户端篡改内部文件路径与索引元数据）"""
+    existing = DocumentService.get_by_id(db, document_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="文档不存在")
+    current_user = UserService.get_by_id(db, user_id)
+    if existing.created_by != user_id and (not current_user or current_user.role != "admin"):
+        raise HTTPException(status_code=403, detail="无权限修改此文档")
+
+    safe_update = data.model_copy(
+        update={"file_path": None, "vector_doc_id": None, "chunk_count": None, "status": None}
+    )
+    doc = DocumentService.update(db, document_id, safe_update)
     return _success(
         data=DocumentResponse.model_validate(doc).model_dump(),
         message="文档更新成功",

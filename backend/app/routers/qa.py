@@ -146,9 +146,9 @@ def get_session_detail(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """获取单会话详情"""
+    """获取单会话详情（仅返回当前登录用户的记录，防止 IDOR 越权读取）"""
     records, total = QAService.get_session_history(
-        db, session_id, page=page, page_size=page_size
+        db, session_id, page=page, page_size=page_size, user_id=user_id
     )
     return _success(
         data={
@@ -167,10 +167,10 @@ def delete_session(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """删除会话"""
+    """删除会话（仅当确实删除了属于自己的记录时才清除对应会话缓存）"""
     deleted = QAService.delete_session(db, session_id, user_id=user_id)
-    # 清除缓存
-    QACache.clear_session(session_id)
+    if deleted > 0:
+        QACache.clear_session(session_id)
     return _success(
         data={"deleted_count": deleted},
         message="会话已删除",
@@ -193,9 +193,11 @@ def submit_feedback(
 ):
     """提交问答反馈"""
     try:
-        record = QAService.update_feedback(db, record_id, feedback)
+        record = QAService.update_feedback(db, record_id, feedback, user_id=user_id)
         if not record:
             raise HTTPException(status_code=404, detail="记录不存在")
         return _success(message="反馈已提交")
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

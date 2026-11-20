@@ -53,7 +53,10 @@ export default function Chat() {
   const [isRagMode, setIsRagMode] = useState(true);
   const [expandedSources, setExpandedSources] = useState<Set<number>>(new Set());
 
-  const generateSessionId = () => 'session-' + Date.now();
+  const generateSessionId = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? `session-${crypto.randomUUID()}`
+      : `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   useEffect(() => {
     loadSessions();
@@ -194,8 +197,8 @@ export default function Chat() {
                     });
                   },
                   onDone: (result) => {
-                    // Prefer the accumulated stream; fall back to done payload
-                    const answer = acc || result.answer || '未获取到回答';
+                    // 优先使用服务端经过引用后校验清洗的 result.answer，避免未清洗的流式原文覆盖
+                    const answer = result.answer || acc || '未获取到回答';
                     const sources = finalSources ?? result.sources;
                     setMessages((prev) =>
                       prev.map((m) =>

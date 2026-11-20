@@ -36,6 +36,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuth();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return user?.role === 'admin' ? <>{children}</> : <Navigate to="/chat" replace />;
+}
+
 function App() {
   return (
     <ConfigProvider
@@ -155,8 +161,8 @@ function App() {
               <Route path="chat" element={<Chat />} />
               <Route path="documents" element={<Documents />} />
               <Route path="profile" element={<Profile />} />
-              <Route path="admin" element={<Admin />} />
-              <Route path="users" element={<UserManagement />} />
+              <Route path="admin" element={<AdminRoute><Admin /></AdminRoute>} />
+              <Route path="users" element={<AdminRoute><UserManagement /></AdminRoute>} />
               <Route path="" element={<Navigate to="/chat" replace />} />
             </Route>
           </Routes>

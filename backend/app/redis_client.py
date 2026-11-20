@@ -15,28 +15,28 @@ class _RedisClientProxy:
 
     @staticmethod
     def _init_client():
-        """初始化时立即尝试真实 Redis，失败则降级"""
-        if settings.REDIS_FALLBACK_TO_FAKE:
-            try:
-                client = redis.Redis(
-                    host=settings.REDIS_HOST,
-                    port=settings.REDIS_PORT,
-                    db=settings.REDIS_DB,
-                    decode_responses=True,
-                    socket_connect_timeout=1,
-                    socket_timeout=2,
-                    socket_keepalive=False,
-                    retry_on_timeout=False,
-                    health_check_interval=0,
-                )
-                client.ping()
-                print(
-                    f"Redis: connected to real Redis at "
-                    f"{settings.REDIS_HOST}:{settings.REDIS_PORT}"
-                )
-                return client
-            except Exception:
-                pass
+        """优先尝试连接真实 Redis；失败且允许降级时回退到本地 SQLite DiskCache。"""
+        try:
+            client = redis.Redis(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                db=settings.REDIS_DB,
+                decode_responses=True,
+                socket_connect_timeout=1,
+                socket_timeout=2,
+                socket_keepalive=False,
+                retry_on_timeout=False,
+                health_check_interval=0,
+            )
+            client.ping()
+            print(
+                f"Redis: connected to real Redis at "
+                f"{settings.REDIS_HOST}:{settings.REDIS_PORT}"
+            )
+            return client
+        except Exception:
+            if not settings.REDIS_FALLBACK_TO_FAKE:
+                raise
 
         from app.disk_cache import DiskCache
 

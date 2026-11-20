@@ -273,6 +273,7 @@ class DiskCache:
 
             return {
                 "redis_version": "disk_cache-1.0",
+                "server_type": "sqlite",
                 "used_memory": size,
                 "used_memory_human": size_human,
                 "keyspace_hits": 0,
@@ -283,9 +284,10 @@ class DiskCache:
             }
 
     def ping(self) -> bool:
-        """健康检查。"""
-        try:
-            self._cursor.execute("SELECT 1")
-            return True
-        except Exception:
-            return False
+        """线程安全的健康检查。"""
+        with self._lock:
+            try:
+                self._cursor.execute("SELECT 1")
+                return True
+            except Exception:
+                return False

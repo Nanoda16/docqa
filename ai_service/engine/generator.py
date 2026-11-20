@@ -124,10 +124,11 @@ class Generator:
         str
             Generated answer text.
         """
+        self.require()
+        client = self._client
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                client = OpenAI(api_key=self.api_key, base_url=self.base_url)
                 resp = client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -138,6 +139,8 @@ class Generator:
                     max_tokens=max_tokens,
                     timeout=30,
                 )
+                if not getattr(resp, "choices", None) or not resp.choices[0].message.content:
+                    raise RuntimeError("Empty completion response from LLM provider")
                 return resp.choices[0].message.content.strip()
             except Exception as exc:
                 if attempt < max_retries - 1:
@@ -156,7 +159,7 @@ class Generator:
                         max_retries,
                         exc,
                     )
-                    return f"[API Error] {exc}. Please check API key and network connection."
+                    raise RuntimeError(f"LLM 请求失败: {exc}") from exc
 
     def generate_stream(
         self,
@@ -164,29 +167,14 @@ class Generator:
         user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 1024,
-    ) -> Generator[str, None, None]:
-        """Stream a completion, yielding tokens as they arrive.
-
-        Parameters
-        ----------
-        system_prompt : str
-            System-level instruction.
-        user_prompt : str
-            User query / context.
-        temperature : float, optional
-            Sampling temperature (default ``0.3``).
-        max_tokens : int, optional
-            Maximum tokens in the response (default ``1024``).
-
-        Yields
-        ------
-        str
-            Content delta from each streaming chunk.
-        """
+    ):
+        """Stream a completion, yielding tokens as they arrive (never retries mid-stream after emitting tokens)."""
+        self.require()
+        client = self._client
         max_retries = 3
         for attempt in range(max_retries):
+            emitted_any = False
             try:
-                client = OpenAI(api_key=self.api_key, base_url=self.base_url)
                 stream = client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -199,15 +187,19 @@ class Generator:
                     timeout=30,
                 )
                 for chunk in stream:
-                    delta = chunk.choices[0].delta.content
+                    choices = getattr(chunk, "choices", None)
+                    if not choices:
+                        continue
+                    delta = getattr(choices[0].delta, "content", None)
                     if delta:
+                        emitted_any = True
                         yield delta
-                return  # successfully finished streaming
+                return
             except Exception as exc:
-                if attempt < max_retries - 1:
+                if not emitted_any and attempt < max_retries - 1:
                     wait = 2**attempt
                     logger.warning(
-                        "Stream request failed (attempt %d/%d): %s — retrying in %ds",
+                        "Stream request failed before first token (attempt %d/%d): %s — retrying in %ds",
                         attempt + 1,
                         max_retries,
                         exc,
@@ -215,12 +207,8 @@ class Generator:
                     )
                     time.sleep(wait)
                 else:
-                    logger.error(
-                        "Stream request failed after %d attempts: %s",
-                        max_retries,
-                        exc,
-                    )
-                    yield f"[API Error] {exc}. Please check API key and network connection."
+                    logger.error("Stream request failed: %s", exc)
+                    raise RuntimeError(f"LLM 流式请求失败: {exc}") from exc
 
     def generate_with_context(
         self,

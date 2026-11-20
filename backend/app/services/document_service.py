@@ -8,12 +8,13 @@ from pathlib import Path
 import httpx
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.document import Document
 from app.models.enums import DocumentStatus
 from app.schemas.document import DocumentCreate, DocumentUpdate
 
-# ai_service 基础 URL（与 RAGService 保持一致）
-AI_SERVICE_URL = "http://localhost:8003"
+# ai_service 基础 URL（统一从应用配置读取）
+AI_SERVICE_URL = settings.AI_SERVICE_URL.rstrip("/")
 
 # 上传暂存目录：解析并写入知识目录后即可清理，它不参与索引
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"

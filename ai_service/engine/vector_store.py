@@ -236,38 +236,50 @@ class VectorStore:
         return deleted_count
 
     def save(self) -> None:
-        """Persist the index and metadata to disk."""
+        """原子持久化 FAISS 索引与元数据（索引清空时同步删除磁盘旧 faiss.index，防重启长度错配 IndexError）。"""
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
-        if self.index is not None:
-            faiss.write_index(self.index, self.index_path)
-        with open(self.meta_path, "w", encoding="utf-8") as f:
+        if self.index is not None and self.index.ntotal > 0:
+            tmp_idx = self.index_path + ".tmp"
+            faiss.write_index(self.index, tmp_idx)
+            os.replace(tmp_idx, self.index_path)
+        elif os.path.isfile(self.index_path):
+            try:
+                os.remove(self.index_path)
+            except OSError:
+                pass
+        tmp_meta = self.meta_path + ".tmp"
+        with open(tmp_meta, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_meta, self.meta_path)
 
     def load(self) -> bool:
-        """Load index and metadata from disk.
-
-        Returns
-        -------
-        bool
-            ``True`` if both files existed and were loaded, ``False`` otherwise.
-        """
+        """Load index and metadata from disk with ntotal/metadata consistency check."""
         index_exists = os.path.isfile(self.index_path)
         meta_exists = os.path.isfile(self.meta_path)
 
         if not (index_exists and meta_exists):
+            self.index = None
+            self.vectors = None
+            self.metadata = []
             return False
 
-        self.index = faiss.read_index(self.index_path)
+        loaded_index = faiss.read_index(self.index_path)
         with open(self.meta_path, "r", encoding="utf-8") as f:
-            self.metadata = json.load(f)
+            loaded_meta = json.load(f)
 
-        # Reconstruct in-memory vectors from the FAISS index
-        n = self.index.ntotal
-        if n > 0:
-            self.vectors = self.index.reconstruct_n(0, n)
+        if loaded_index.ntotal != len(loaded_meta):
+            # 防止旧索引与元数据不同步引发 search() 时 IndexError
+            self.index = None
+            self.vectors = None
+            self.metadata = []
+            return False
+
+        self.index = loaded_index
+        self.metadata = loaded_meta
+        if loaded_index.ntotal > 0:
+            self.vectors = loaded_index.reconstruct_n(0, loaded_index.ntotal)
         else:
             self.vectors = None
-
         return True
 
     def get_stats(self) -> dict:

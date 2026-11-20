@@ -35,11 +35,19 @@ export default function UserManagement() {
   const openEdit = (u: any) => { setModalType('edit'); setEditingUser(u); form.setFieldsValue({ nickname: u.nickname, email: u.email }); setModalOpen(true); };
   const handleSubmit = async () => {
     try {
-      const values = form.getFieldsValue();
-      if (modalType === 'create') { await api.post('/user/register', { ...values, password: '123456' }); message.success('创建成功，默认密码 123456'); }
-      else { await api.put(`/user/${editingUser.id}`, values); message.success('已更新'); }
-      setModalOpen(false); loadUsers();
-    } catch (e) {}
+      const values = await form.validateFields();
+      if (modalType === 'create') {
+        await api.post('/user/admin/create', { ...values, password: values.password || '123456' });
+        message.success('创建成功');
+      } else {
+        await api.put(`/user/${editingUser.id}`, values);
+        message.success('已更新');
+      }
+      setModalOpen(false);
+      loadUsers();
+    } catch {
+      /* validation or API error */
+    }
   };
   const updateRole = async (id: number, role: string) => { try { await api.put(`/user/${id}/role?role=${role}`); loadUsers(); } catch (e) {} };
   const toggleStatus = async (id: number, s: number) => { try { await api.put(`/user/${id}/status?status=${s}`); message.success(s === 1 ? '已启用' : '已禁用'); loadUsers(); } catch (e) {} };

@@ -3,9 +3,9 @@
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.deps import require_admin, success_response
 from app.redis_client import redis_client
 from app.services.user_service import UserService
 
@@ -22,17 +22,20 @@ def _decode_key(key: str) -> str:
             user_id = parts[3]
             question = parts[4]
             if user_id not in _user_name_cache:
+                db = None
                 try:
                     from app.database import SessionLocal as _SessionLocal
 
                     db = _SessionLocal()
                     user = UserService.get_by_id(db, int(user_id))
-                    db.close()
                     _user_name_cache[user_id] = (
                         user.nickname or user.username if user else f"用户{user_id}"
                     )
                 except Exception:
                     _user_name_cache[user_id] = f"用户{user_id}"
+                finally:
+                    if db is not None:
+                        db.close()
             return f"{_user_name_cache[user_id]} 问: {question}"
     elif key.startswith("campus:qa:session:"):
         sid = key.replace("campus:qa:session:", "")
@@ -43,34 +46,8 @@ def _decode_key(key: str) -> str:
 
 
 router = APIRouter(prefix="/api/admin", tags=["管理后台"])
-
-
-def _success(data=None, message="success"):
-    return {
-        "code": 200,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time()),
-    }
-
-
-def _require_admin(authorization: str = Header(None)) -> dict:
-    """验证 JWT 并确保角色为 admin"""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="未提供认证令牌")
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="认证令牌格式错误")
-
-    payload = UserService.decode_access_token(token)
-    if payload is None:
-        raise HTTPException(status_code=401, detail="认证令牌无效或已过期")
-
-    if payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限访问，需要管理员角色")
-
-    return payload
+_success = success_response
+_require_admin = require_admin
 
 
 def _scan_keys(pattern: str, count: int = 500) -> list[str]:
@@ -126,7 +103,10 @@ def get_cache_stats(_=Depends(_require_admin)):
             stat["hit_ratio"] = round(hits / total * 100, 2)
 
         stat["evicted_keys"] = info.get("evicted_keys", "N/A")
-        stat["server_type"] = "real" if "uptime_in_seconds" in info else "fakeredis"
+        if info.get("server_type") == "sqlite" or str(stat["redis_version"]).startswith("disk_cache"):
+            stat["server_type"] = "sqlite"
+        else:
+            stat["server_type"] = "real" if "uptime_in_seconds" in info else "fakeredis"
     except Exception:
         stat["server_type"] = "fakeredis"
 
@@ -302,18 +282,3 @@ def warmup_cache(
         },
         message=f"已预热 {warmed} 个热点问题",
     )
-
-
-# ─── 管理后台页面 ─────────────────────────────────────
-
-
-_html_path = Path(__file__).resolve().parent.parent / "static" / "admin.html"
-
-
-@router.get("/ui/cache", response_class=HTMLResponse, include_in_schema=False)
-def admin_dashboard(request: Request):
-    """管理后台缓存面板页面"""
-    if not _html_path.exists():
-        raise HTTPException(status_code=404, detail="Dashboard page not found")
-    html_content = _html_path.read_text(encoding="utf-8")
-    return HTMLResponse(content=html_content)

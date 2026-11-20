@@ -14,9 +14,11 @@ GET  /stats         → Knowledge base statistics
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -34,6 +36,54 @@ logging.basicConfig(
 logger = logging.getLogger("ai_service")
 
 # ---------------------------------------------------------------------------
+# Security & Allowed Paths
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_INTERNAL_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "").strip()
+_CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "AI_CORS_ORIGINS",
+        "http://localhost:8002,http://127.0.0.1:8002,http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if o.strip()
+]
+
+
+def _verify_internal_token(x_internal_token: str | None = Header(None)) -> None:
+    """若设置了 INTERNAL_API_TOKEN，则强制校验内部调用方凭证。"""
+    if _INTERNAL_TOKEN and x_internal_token != _INTERNAL_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden: invalid internal token")
+
+
+def _allowed_process_roots() -> list[Path]:
+    roots = [
+        (_REPO_ROOT / "knowledge_docs").resolve(),
+        (_REPO_ROOT / "backend" / "uploads").resolve(),
+    ]
+    kdir = os.environ.get("KNOWLEDGE_DIR", "").strip()
+    if kdir:
+        roots.append(Path(kdir).resolve())
+    extra = os.environ.get("AI_ALLOWED_DIRS", "").strip()
+    if extra:
+        for item in extra.split(os.pathsep):
+            if item.strip():
+                roots.append(Path(item.strip()).resolve())
+    return roots
+
+
+def _validate_file_path(file_path: str) -> Path:
+    target = Path(file_path).resolve()
+    if not any(target.is_relative_to(root) for root in _allowed_process_roots()):
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: file_path is outside allowed knowledge/uploads directories",
+        )
+    return target
+
+
+# ---------------------------------------------------------------------------
 # App & CORS
 # ---------------------------------------------------------------------------
 
@@ -41,7 +91,7 @@ app = FastAPI(title="AI Service", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,15 +196,15 @@ async def health() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-@app.post("/query", response_model=QueryResponse)
-async def query(body: QueryRequest) -> dict[str, Any]:
+@app.post("/query", response_model=QueryResponse, dependencies=[Depends(_verify_internal_token)])
+def query(body: QueryRequest) -> dict[str, Any]:
     try:
         history = [t.model_dump() for t in body.history]
         result = pipeline.run(query=body.question, top_k=body.top_k, history=history)
         return result
-    except Exception as exc:
+    except Exception:
         logger.exception("Sync query failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="AI 查询处理失败，请检查服务端日志")
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +212,7 @@ async def query(body: QueryRequest) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@app.get("/query/stream")
+@app.get("/query/stream", dependencies=[Depends(_verify_internal_token)])
 async def query_stream(
     question: str = Query(..., description="The user's question"),
     top_k: int = Query(
@@ -189,7 +239,7 @@ async def query_stream(
         except (ValueError, TypeError):
             logger.warning("Failed to parse history query param; ignoring")
 
-    async def event_generator():
+    def event_generator():
         import json as _json
 
         try:
@@ -197,15 +247,13 @@ async def query_stream(
                 query=question, top_k=top_k, history=parsed_history
             ):
                 event_type = event.pop("type", None) or "unknown"
-                # data 必须是合法 JSON 字符串（默认 str(dict) 会产生单引号，
-                # 前端 JSON.parse 会失败，导致 token 无法渲染）
                 yield {
                     "event": event_type,
                     "data": _json.dumps(event, ensure_ascii=False),
                 }
-        except Exception as exc:
+        except Exception:
             logger.exception("Streaming query failed")
-            yield {"event": "error", "data": _json.dumps({"message": str(exc)})}
+            yield {"event": "error", "data": _json.dumps({"message": "AI 流式问答失败，请稍后重试"}, ensure_ascii=False)}
 
     return EventSourceResponse(event_generator())
 
@@ -215,19 +263,16 @@ async def query_stream(
 # ---------------------------------------------------------------------------
 
 
-@app.get("/reindex")
-async def reindex() -> dict[str, Any]:
-    """Rebuild the whole index from the knowledge directory.
-
-    Returns the counts plus a ``documents`` manifest so the backend can mirror
-    its ``kb_document`` table to whatever is actually on disk.
-    """
+@app.post("/reindex", dependencies=[Depends(_verify_internal_token)])
+@app.get("/reindex", dependencies=[Depends(_verify_internal_token)])
+def reindex() -> dict[str, Any]:
+    """Rebuild the whole index from the knowledge directory (POST preferred, GET kept for compatibility)."""
     try:
         result = pipeline.index_documents()
         return result
-    except Exception as exc:
+    except Exception:
         logger.exception("Re-index failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="全量重建索引失败，请检查服务端日志")
 
 
 # ---------------------------------------------------------------------------
@@ -235,45 +280,38 @@ async def reindex() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@app.post("/process", response_model=ProcessResponse)
-async def process(body: ProcessRequest) -> dict[str, Any]:
-    """Index one document.
-
-    With ``persist=True`` (the default, used for uploads) the parsed text is
-    first written into the knowledge directory and then indexed, so a later
-    ``/reindex`` still finds it.  With ``persist=False`` the file is indexed in
-    place — use that when re-processing a file that already lives there.
-    """
+@app.post("/process", response_model=ProcessResponse, dependencies=[Depends(_verify_internal_token)])
+def process(body: ProcessRequest) -> dict[str, Any]:
+    """Index one document after validating file_path is within allowed directories."""
+    validated = _validate_file_path(body.file_path)
     try:
         if body.persist:
             result = pipeline.import_document(
-                source_path=body.file_path,
+                source_path=str(validated),
                 category=body.category,
             )
         else:
             result = pipeline.add_document(
-                file_path=body.file_path,
+                file_path=str(validated),
                 doc_id=body.doc_id,
             )
         return result
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Process document failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="文档解析入库失败，请检查服务端日志")
 
 
-@app.delete("/document/{doc_id}")
-async def delete_document(doc_id: str, delete_file: bool = True) -> dict[str, Any]:
-    """Remove a document from the index and from the knowledge directory.
-
-    Set ``delete_file=false`` to keep the file on disk while dropping its
-    vectors — that is what "re-process this document" needs.
-    """
+@app.delete("/document/{doc_id}", dependencies=[Depends(_verify_internal_token)])
+def delete_document(doc_id: str, delete_file: bool = True) -> dict[str, Any]:
+    """Remove a document from the index and from the knowledge directory."""
     try:
         result = pipeline.remove_document(doc_id, delete_file=delete_file)
         return result
-    except Exception as exc:
+    except Exception:
         logger.exception("Delete document failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="删除索引文档失败，请检查服务端日志")
 
 
 # ---------------------------------------------------------------------------
@@ -281,13 +319,13 @@ async def delete_document(doc_id: str, delete_file: bool = True) -> dict[str, An
 # ---------------------------------------------------------------------------
 
 
-@app.get("/stats")
-async def stats() -> dict[str, Any]:
+@app.get("/stats", dependencies=[Depends(_verify_internal_token)])
+def stats() -> dict[str, Any]:
     try:
         return pipeline.get_stats()
-    except Exception as exc:
+    except Exception:
         logger.exception("Get stats failed")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="获取统计信息失败")
 
 
 # ---------------------------------------------------------------------------
@@ -297,4 +335,6 @@ async def stats() -> dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8003, reload=False)
+    host = os.environ.get("AI_SERVICE_HOST", "127.0.0.1")
+    port = int(os.environ.get("AI_SERVICE_PORT", "8003"))
+    uvicorn.run("main:app", host=host, port=port, reload=False)

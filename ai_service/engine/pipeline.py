@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import threading
 import time
 from typing import Any, Generator as GeneratorType
 
@@ -78,6 +80,7 @@ class RAGPipeline:
         self._generator: Generator | None = generator
         self.bm25_retriever = bm25_retriever or BM25Retriever()
         # Pipeline state: populated by query methods for downstream fusion
+        self._lock = threading.RLock()
         self._bm25_results: list[tuple[str, float]] = []
         self._fused_results: list[tuple[str, float, list[float]]] = []
 
@@ -227,16 +230,24 @@ class RAGPipeline:
     # Small-talk detection
     # ------------------------------------------------------------------
 
-    _GREETINGS = [
-        "你好", "您好", "hi", "hello", "嗨", "在吗", "在不在",
-        "谢谢", "感谢", "多谢", "你是谁", "你叫什么",
-    ]
+    _GREETINGS = frozenset({
+        "你好", "您好", "hi", "hello", "hey", "嗨", "哈喽", "在吗", "在不在",
+        "谢谢", "感谢", "多谢", "谢谢你", "感谢你", "你是谁", "你叫什么",
+        "你好呀", "你好啊", "早安", "早上好", "下午好", "晚上好",
+    })
+    _PUNCT_STRIP_RE = re.compile(r"[\s，。！？、,.!?;:~～]+")
 
     @staticmethod
     def _is_small_talk(query: str) -> bool:
-        """Return True if *query* is just a greeting or chit-chat."""
-        q = query.strip().lower()
-        return any(g in q for g in RAGPipeline._GREETINGS)
+        """Return True ONLY when *query* itself is a standalone greeting/chit-chat.
+
+        Avoids substring false positives such as 'history'/'which' (containing 'hi')
+        or polite domain questions like '你好，请问图书馆开放时间是什么？'.
+        """
+        q = RAGPipeline._PUNCT_STRIP_RE.sub("", query.strip().lower())
+        if not q or len(q) > 12:
+            return False
+        return q in RAGPipeline._GREETINGS
 
     # ------------------------------------------------------------------
     # Reranker integration
@@ -423,9 +434,7 @@ class RAGPipeline:
                 "sources": [],
             }
 
-        # 3. RRF fusion — merge the two ranked lists, then keep the best few.
-        #    Rank-based fusion, so the two retrievers never have to agree on
-        #    the scale of their scores.
+        # 3. RRF fusion — merge the two ranked lists; if reranker is enabled, rerank full pool first
         self._fused_results = rrf_fuse(
             chunks,
             self._bm25_results,
@@ -437,14 +446,14 @@ class RAGPipeline:
             len(chunks), len(self._bm25_results), len(self._fused_results),
             query[:60],
         )
-        chunks = self._materialize_fusion(chunks, self._fused_results)[
-            : self._final_top_k
-        ]
+        materialized = self._materialize_fusion(chunks, self._fused_results)
 
-        # 4. Optional cross-encoder rerank (off by default — see __init__)
-        if self._reranker_enabled and chunks:
-            logger.debug("Reranking %d chunks for query: %s", len(chunks), query[:60])
-            chunks = self._rerank_chunks(query, chunks)
+        # 4. Optional cross-encoder rerank over full candidate pool, then truncate to final window
+        if self._reranker_enabled and materialized:
+            logger.debug("Reranking %d chunks for query: %s", len(materialized), query[:60])
+            chunks = self._rerank_chunks(query, materialized)[: self._final_top_k]
+        else:
+            chunks = materialized[: self._final_top_k]
 
         # 3. Build prompt pair from retrieved chunks (+ optional history)
         system_prompt, user_prompt = prompts.build_prompt(query, chunks, history)
@@ -665,8 +674,14 @@ class RAGPipeline:
         logger.info("Loaded %d document(s)", doc_count)
 
         if doc_count == 0:
+            # 知识库目录清空时，必须同步清空内存与磁盘上的旧 FAISS 与 BM25 索引
+            self.vector_store.index = None
+            self.vector_store.vectors = None
+            self.vector_store.metadata = []
+            self.vector_store.save()
+            self.bm25_retriever.build([], [])
             elapsed = time.time() - t0
-            logger.warning("No documents found to index")
+            logger.warning("No documents found to index; cleared existing indexes")
             return {
                 "docs_count": 0,
                 "chunks_count": 0,

@@ -1,110 +1,128 @@
 # CampusQA
 
-校园知识库问答系统：React 前端 + FastAPI 业务后端 + FastAPI AI 微服务。提问时先从知识库检索相关片段，再调用 DeepSeek 生成回答。
+[![CI](https://github.com/Nanoda16/CampusQA/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanoda16/CampusQA/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![React + TypeScript](https://img.shields.io/badge/Frontend-React%2019%20%2B%20TS-61dafb.svg)](frontend/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## 功能
+面向高校知识库场景的全栈 RAG 智能问答系统：**React + TypeScript 前端**、**FastAPI 业务后端**、**FastAPI AI 检索微服务**。采用 **FAISS 稠密向量 + BM25 稀疏关键词 + RRF 融合检索**，支持真 SSE 流式输出、多轮对话指代消解、引用来源后校验、以及 Redis → 本地 SQLite 持久化缓存降级。
 
-- 知识库问答：FAISS 向量和 BM25 关键词混合检索，回答附引用来源，库里没有的内容直接回答未找到
-- SSE 流式输出，支持多轮对话
-- 文档管理：上传 pdf / doc / docx / txt，解析成纯文本入库，按分类管理，可一键重建索引
-- 用户系统：注册登录（JWT），管理员可管理用户
-- Redis 缓存问答结果，没装 Redis 时自动降级为本地 SQLite 缓存
+---
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    U["React + TS 前端 (5173 / 8002)"] -->|JWT / REST / SSE| B["FastAPI 业务后端 (8002)"]
+    B -->|SQLAlchemy + Alembic| DB[("MySQL 8")]
+    B -->|优先 Redis, 失败降级 SQLite| Cache[("Redis / DiskCache")]
+    B -->|HTTP + X-Internal-Token| AI["FastAPI AI 微服务 (8003)"]
+
+    subgraph RAG["RAG 检索与生成管线 (ai_service)"]
+        AI --> D1["FAISS 稠密检索 (bge-small-zh)"]
+        AI --> D2["Jieba + BM25 稀疏检索"]
+        D1 --> F["RRF 多路融合 + 可选 Cross-Encoder 重排"]
+        D2 --> F
+        F --> G["DeepSeek 流式生成 (SSE)"]
+        G --> C["Citation Validator 幻觉引用剔除"]
+    end
+```
+
+---
+
+## 核心功能与工程特性
+
+- **混合检索与引用溯源**：Dense（FAISS）+ Sparse（BM25）经 RRF 融合排序，支持多轮对话上下文与回答末尾 `[Sx]` 引用后校验（自动剔除越界幻觉引用）。
+- **真 SSE 实时流式输出**：AI 服务与业务后端端到端实时透传 token，首字响应快，前端兼容 CRLF 与 AbortController 取消，并在结束事件使用服务端清洗后的最终回答落库。
+- **知识目录单一事实源**：`knowledge_docs/` 统一管理语料，支持界面上传 PDF/DOC/DOCX/TXT 流式分块限额解析入库，并可一键全量重建索引且自动对齐 MySQL 记录。
+- **安全与权限控制**：JWT 鉴权实时校验数据库用户状态与角色；公开注册强制 `student` 角色防垂直越权；会话详情/反馈/文档更新均强制归属权校验防 IDOR；AI 微服务支持 `INTERNAL_API_TOKEN` 与文件路径白名单；静态页 SPA 回退严格校验目录边界。
+- **高可用缓存降级**：优先连接 Redis，不可用时自动无缝降级为线程安全的本地 SQLite `DiskCache`。
+
+---
+
+## RAG 检索评测与消融发现
+
+基于 340 篇校园公开文档（2,017 个切片）与 50 条自建评测集（40 条可答 + 10 条域外 OOD），对比了混合检索与 Cross-Encoder 重排效果：
+
+| 配置 | Hit@5 | MRR@5 | 平均检索延迟 | 结论 |
+| :--- | ---: | ---: | ---: | :--- |
+| **Hybrid（Dense + BM25 + RRF，默认）** | **0.725 (29/40)** | **0.6425** | **0.295 s** | 默认生产配置 |
+| Hybrid + Cross-Encoder（公平 top-5） | 0.725 (29/40) | 0.5500 | 1.021 s | 延迟增至 3.5x 且 MRR 略降，故默认关闭 |
+
+> **关键工程复盘**：
+> 1. 通过公平消融排查发现，早期测得“重排降低 Hit@5”系候选窗口不对称（top-5 vs top-3）叠加 `doc_id` 键覆盖多 chunk 分数所致；修正后同池对比确认关闭重排更优。
+> 2. OOD 域外阈值扫描表明：可答问题相似度区间 `[0.544, 0.831]` 与域外问题 `[0.626, 0.745]` 高度重叠，仅靠单标量向量相似度难以兼顾低误拒与低漏拒，后续演进方向为多信号融合（BM25 覆盖率 + 分类器）。
+
+---
 
 ## 快速开始
 
-环境：Python 3.11+、Node.js 20.19+、MySQL 8；Redis 可选。
+环境要求：Python 3.11+、Node.js 20.19+、MySQL 8（Redis 可选）。
 
-### 1. 配置 AI 服务
+### 1. 配置环境变量
 
-新建 `ai_service/.env`：
-
-```env
-DEEPSEEK_API_KEY=你的key
-# 下面两项可选，写出的是默认值
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-chat
+```bash
+cp ai_service/.env.example ai_service/.env   # 填入 DEEPSEEK_API_KEY
+cp backend/.env.example backend/.env         # 填入 MySQL 连接参数与强随机 JWT_SECRET_KEY
 ```
 
-### 2. 准备数据库
-
-建一个 MySQL 库：
+### 2. 初始化数据库并启动服务
 
 ```sql
 CREATE DATABASE IF NOT EXISTS campus_qa DEFAULT CHARSET utf8mb4;
 ```
 
-连接参数放在 `backend/.env`：
-
-```env
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=你的密码
-DB_NAME=campus_qa
-```
-
-空库第一次启动后端时会自动建表。如果手上是旧版本的表结构，先在 `backend/` 目录做迁移（alembic 不在 requirements.txt 里，需要单独安装）：
-
 ```bash
-pip install alembic
-alembic upgrade head
-```
-
-### 3. 启动服务
-
-三个进程，各占一个终端：
-
-```bash
-# AI 微服务，端口 8003
+# 1) AI 微服务（端口 8003）
 cd ai_service
 pip install -r requirements.txt
-python -m uvicorn main:app --port 8003
+python -m uvicorn main:app --host 127.0.0.1 --port 8003
 
-# 业务后端，端口 8002
+# 2) 业务后端（端口 8002）
 cd backend
 pip install -r requirements.txt
-python -m uvicorn app.main:app --port 8002
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8002
 
-# 前端开发服务器，端口 5173，/api 由 vite 代理到 8002
+# 3) 前端开发服务（端口 5173）
 cd frontend
 npm install
 npm run dev
 ```
 
-访问 http://localhost:5173 ，接口文档在 http://localhost:8002/docs 。
+访问 http://localhost:5173 ，API 文档在 http://localhost:8002/docs 。如需单端口运行，可先在 `frontend/` 执行 `npm run build`，后端会自动托管静态产物（http://localhost:8002 ）。
 
-不想开三个窗口的话：先在 `frontend/` 执行 `npm run build`，再运行根目录的 `start.bat` 或 `start.ps1`。后端启动时发现 `frontend/dist` 存在就会直接托管它，这样只要 8002 和 8003 两个进程，浏览器打开 http://localhost:8002 即可。
+### 3. 运行自动化测试
 
-### 4. 装入知识库
+```bash
+# 后端安全与核心 API 单元测试（基于内存 SQLite，零外部依赖）
+python -m pytest backend/tests -q
 
-仓库不带语料，克隆下来知识库是空的。把自己的 `.md` / `.txt` 文件放进 `knowledge_docs/`，或者从 Release v1.0.0 下载 `knowledge_docs-seed.zip` 解压到 `knowledge_docs/`，然后在页面上点「重建索引」，之后就能提问了。
+# AI 引擎核心单元测试（离线运行，无需下载大模型权重）
+python -m pytest ai_service/tests -q
 
-## 知识目录
+# 前端类型检查与生产构建
+cd frontend && npm run build
+```
 
-`knowledge_docs/` 是知识库唯一的来源：
-
-- 只认 `.md` 和 `.txt`，子目录名就是分类
-- 重建索引就是重扫这个目录
-- 界面上传的文件会先解析成纯文本写进这个目录，和手动放文件等价
-- 环境变量 `KNOWLEDGE_DIR` 可以指向别的目录；`AI_DATA_DIR` 可以改索引产物（向量、元数据）的位置，默认在 `ai_service/data/`
+---
 
 ## 目录结构
 
-```
-├── ai_service/        # AI 微服务（8003）：检索、索引、调用 DeepSeek
-│   ├── main.py        # FastAPI 入口
-│   ├── engine/        # 切片、向量库、混合检索、生成等
-│   └── requirements.txt
-├── backend/           # 业务后端（8002）：用户、文档、问答记录
-│   ├── app/
-│   ├── alembic/       # 数据库迁移
-│   └── requirements.txt
-├── frontend/          # React + Vite 前端（开发端口 5173）
-├── knowledge_docs/    # 知识库目录
-├── start.bat          # 一键启动（先 npm run build）
-└── start.ps1
+```text
+├── .github/workflows/ci.yml  # 后端 + AI 引擎 + 前端三路 CI
+├── ai_service/               # AI 微服务（8003）：FAISS + BM25 + RRF + DeepSeek
+│   ├── main.py
+│   ├── engine/               # loader / chunker / embedding / vector_store / bm25 / fusion / citation
+│   └── tests/                # AI 引擎单元测试
+├── backend/                  # 业务后端（8002）：认证、权限、文档、问答、缓存管理
+│   ├── app/                  # deps / routers / services / models / schemas / cache
+│   ├── alembic/              # 数据库迁移脚本
+│   └── tests/                # 后端安全与业务 API 单元测试
+├── frontend/                 # React 19 + TypeScript + Vite + Tailwind 前端
+├── knowledge_docs/           # 知识库目录（唯一事实源）
+└── LICENSE
 ```
 
-## 许可证
+## License
 
-MIT
+[MIT](LICENSE)

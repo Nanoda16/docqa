@@ -176,8 +176,8 @@ export default function Documents() {
   };
 
   const handleSubmit = async () => {
-    const values = form.getFieldsValue();
     try {
+      const values = await form.validateFields();
       if (modalMode === 'create') {
         await api.post('/document', values);
         message.success('文档创建成功');
@@ -189,7 +189,7 @@ export default function Documents() {
       form.resetFields();
       loadDocuments();
     } catch {
-      /* error toast from interceptor */
+      /* validation error or toast from interceptor */
     }
   };
 
@@ -220,7 +220,8 @@ export default function Documents() {
   const handleRebuild = async () => {
     setRebuilding(true);
     try {
-      const res: any = await api.post('/document/rebuild-index');
+      // 全量重建索引耗时长，覆盖默认 10s 超时为 10 分钟
+      const res: any = await api.post('/document/rebuild-index', {}, { timeout: 600000 });
       if (res.code === 200) {
         message.success(
           `重建索引完成: ${res.data?.docs_count || 0} 篇文档, ${res.data?.chunks_count || 0} 个切片`,
@@ -230,7 +231,7 @@ export default function Documents() {
         message.error(res.message || '重建索引失败');
       }
     } catch {
-      message.error('重建索引失败，请检查权限或联系管理员');
+      /* error toast handled by api interceptor */
     } finally {
       setRebuilding(false);
     }

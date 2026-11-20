@@ -37,12 +37,12 @@ class QAService:
         session_id: str,
         page: int = 1,
         page_size: int = 50,
+        user_id: int | None = None,
     ) -> tuple[list[QARecord], int]:
-        """获取指定会话的历史记录"""
-        query = (
-            db.query(QARecord)
-            .filter(QARecord.session_id == session_id)
-        )
+        """获取指定会话的历史记录（传入 user_id 时强制隔离归属权）"""
+        query = db.query(QARecord).filter(QARecord.session_id == session_id)
+        if user_id is not None:
+            query = query.filter(QARecord.user_id == user_id)
         total = query.count()
         records = (
             query.order_by(QARecord.created_at.asc())
@@ -80,16 +80,16 @@ class QAService:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[dict], int]:
-        """获取用户的所有会话列表（按session_id分组）"""
+        """获取用户的所有会话列表（按最新时间倒序，并取时间上最新的一条提问作为标题）"""
         from sqlalchemy import func as sa_func
 
-        # 子查询：按 session_id 分组，取每个会话的最新时间和记录数
+        # 按 session_id 汇总最新时间、最大记录 ID 与条数
         subquery = (
             db.query(
-                QARecord.session_id,
+                QARecord.session_id.label("session_id"),
                 sa_func.max(QARecord.created_at).label("last_time"),
                 sa_func.count(QARecord.id).label("msg_count"),
-                sa_func.min(QARecord.question).label("first_question"),
+                sa_func.max(QARecord.id).label("latest_id"),
             )
             .filter(
                 QARecord.user_id == user_id,
@@ -99,23 +99,33 @@ class QAService:
             .subquery()
         )
 
-        # 查询所有分组并分页
-        query = db.query(subquery)
-        total = query.count()
-        sessions = (
-            query.order_by(subquery.c.last_time.desc())
+        total = db.query(subquery).count()
+        rows = (
+            db.query(
+                subquery.c.session_id,
+                subquery.c.last_time,
+                subquery.c.msg_count,
+                QARecord.question,
+                QARecord.answer,
+            )
+            .join(QARecord, QARecord.id == subquery.c.latest_id)
+            .order_by(subquery.c.last_time.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
             .all()
         )
 
         result = []
-        for s in sessions:
+        for sid, last_time, msg_count, question, answer in rows:
             result.append({
-                "session_id": s[0],
-                "last_time": s[1],
-                "msg_count": s[2],
-                "first_question": s[3],
+                "session_id": sid,
+                "question_count": msg_count,
+                "msg_count": msg_count,
+                "last_question": question or "",
+                "first_question": question or "",
+                "last_answer": answer or "",
+                "updated_at": last_time.isoformat() if last_time else "",
+                "last_time": last_time,
             })
         return result, total
 
@@ -131,15 +141,17 @@ class QAService:
 
     @staticmethod
     def update_feedback(
-        db: Session, record_id: int, feedback: int
+        db: Session, record_id: int, feedback: int, user_id: int | None = None
     ) -> QARecord | None:
-        """更新问答反馈"""
+        """更新问答反馈（校验记录归属权，防止 IDOR 越权篡改）"""
         if feedback not in (0, 1, 2):
             raise ValueError("feedback 必须是 0(无)、1(有用) 或 2(无用)")
 
         record = QAService.get_by_id(db, record_id)
         if not record:
             return None
+        if user_id is not None and record.user_id != user_id:
+            raise PermissionError("无权限评价他人问答记录")
 
         record.feedback = feedback
         db.commit()

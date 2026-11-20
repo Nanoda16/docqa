@@ -93,33 +93,38 @@ if FRONTEND_DIR.exists():
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend(full_path: str, request: Request):
         # Skip API routes (they should have matched above routers)
-        if full_path.startswith("api/") or full_path.startswith("admin/cache") or full_path.startswith("docs") or full_path.startswith("redoc"):
+        if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc"):
             return HTMLResponse(status_code=404)
-        fp = FRONTEND_DIR / full_path
-        if fp.exists() and fp.is_file():
-            # Serve real files as-is; only index.html gets no-cache below
-            if fp.name == "index.html":
-                return FileResponse(fp, headers=_NO_CACHE)
-            return FileResponse(fp)
-        return FileResponse(FRONTEND_DIR / "index.html", headers=_NO_CACHE)
-
-
-_admin_html = Path(__file__).resolve().parent / "static" / "admin.html"
-
-
-@app.get("/admin/cache", response_class=HTMLResponse, include_in_schema=False)
-def admin_cache_page():
-    """管理后台缓存面板"""
-    if _admin_html.exists():
-        return HTMLResponse(content=_admin_html.read_text(encoding="utf-8"))
-    return HTMLResponse(content="<h1>Dashboard not found</h1>", status_code=404)
+        base_dir = FRONTEND_DIR.resolve()
+        try:
+            target = (base_dir / full_path).resolve()
+        except (OSError, ValueError):
+            return HTMLResponse(status_code=404)
+        # 严格校验目录边界，防止 ../ 或反斜杠路径穿越读取任意文件
+        if not target.is_relative_to(base_dir):
+            return HTMLResponse(status_code=403)
+        if target.exists() and target.is_file():
+            if target.name == "index.html":
+                return FileResponse(target, headers=_NO_CACHE)
+            return FileResponse(target)
+        return FileResponse(base_dir / "index.html", headers=_NO_CACHE)
 
 
 @app.on_event("startup")
 def on_startup():
-    """应用启动时创建数据库表"""
+    """应用启动时创建数据库表并恢复重启前中断的 PROCESSING 文档。"""
     try:
         init_db()
+        from app.database import SessionLocal
+        from app.services.document_service import IngestionService
+
+        db = SessionLocal()
+        try:
+            recovered = IngestionService.reset_processing_docs(db)
+            if recovered:
+                logger.warning("启动恢复了 %d 条卡在 PROCESSING 状态的文档", recovered)
+        finally:
+            db.close()
         print("✓ 数据库表初始化完成")
     except Exception as e:
         print(f"✗ 数据库表初始化失败: {e}")

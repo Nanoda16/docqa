@@ -1,16 +1,16 @@
 """用户相关 Pydantic 模型"""
 
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 
 class UserCreate(BaseModel):
-    """用户注册请求"""
+    """用户注册请求（公开注册始终以 student 角色创建；max_length=72 兼容 bcrypt 上限）"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
-    password: str = Field(..., min_length=6, max_length=128, description="密码")
+    password: str = Field(..., min_length=6, max_length=72, description="密码")
     nickname: str | None = Field(None, max_length=50, description="昵称")
     email: str | None = Field(None, max_length=100, description="邮箱")
-    role: str = Field("student", pattern="^(student|teacher|admin)$", description="角色")
+    role: str = Field("student", pattern="^(student|teacher|admin)$", description="角色（仅管理员建号生效）")
 
 
 class UserLogin(BaseModel):

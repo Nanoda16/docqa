@@ -9,7 +9,8 @@ import {
   ReadOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 interface NavItem {
   key: string;
@@ -29,21 +30,16 @@ const PAGE_META: Record<string, { title: string; eyebrow: string; hint: string }
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [user, setUser] = useState<any>(null);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
-    const userStr = localStorage.getItem('user');
-    const parsed = userStr ? JSON.parse(userStr) : null;
-    if (!parsed) {
+    if (!user) {
       navigate('/login');
-      return;
     }
-    setUser(parsed);
-  }, [navigate]);
+  }, [user, navigate]);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    logout();
     navigate('/login');
   };
 

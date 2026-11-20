@@ -71,7 +71,7 @@ export class SSEDecoder {
    * Partial lines are buffered until the next call.
    */
   feed(chunk: string): SSEMessage[] {
-    this.buffer += chunk;
+    this.buffer += chunk.replace(/\r\n/g, '\n');
     const messages: SSEMessage[] = [];
     const lines = this.buffer.split('\n');
 
@@ -79,12 +79,13 @@ export class SSEDecoder {
     this.buffer = lines.pop() || '';
 
     for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        this.currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        this.currentData.push(line.slice(6));
-      } else if (line.startsWith('id: ')) {
-        this.currentId = line.slice(4).trim();
+      if (line.startsWith('event:')) {
+        this.currentEvent = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        const val = line.slice(5);
+        this.currentData.push(val.startsWith(' ') ? val.slice(1) : val);
+      } else if (line.startsWith('id:')) {
+        this.currentId = line.slice(3).trim();
       } else if (line === '') {
         // Empty line marks end of an SSE message
         if (this.currentData.length > 0) {
@@ -223,7 +224,9 @@ export async function streamChat(
     const response = await fetch(fullUrl, { headers, signal: options.signal });
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const err = new Error(`HTTP ${response.status}: ${response.statusText}`) as Error & { status?: number };
+      err.status = response.status;
+      throw err;
     }
 
     const decoder = new SSEDecoder();
@@ -231,21 +234,25 @@ export async function streamChat(
     const textDecoder = new TextDecoder();
     let receivedDone = false;
 
-    // eslint-disable-next-line no-constant-condition
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      // eslint-disable-next-line no-constant-condition
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      // Check abort after each read
-      if (options.signal?.aborted) {
-        throw new DOMException('The operation was aborted', 'AbortError');
-      }
+        // Check abort after each read
+        if (options.signal?.aborted) {
+          throw new DOMException('The operation was aborted', 'AbortError');
+        }
 
-      const messages = decoder.feed(textDecoder.decode(value, { stream: true }));
-      for (const msg of messages) {
-        dispatchMessage(msg, callbacks);
-        if (isDoneEvent(msg)) receivedDone = true;
+        const messages = decoder.feed(textDecoder.decode(value, { stream: true }));
+        for (const msg of messages) {
+          dispatchMessage(msg, callbacks);
+          if (isDoneEvent(msg)) receivedDone = true;
+        }
       }
+    } finally {
+      reader.releaseLock();
     }
 
     // If the stream ended without a done event, the connection was lost
@@ -261,7 +268,9 @@ export async function streamChat(
       return;
     } catch (err) {
       if (options.signal?.aborted) throw err;
-      if (retries >= maxRetries) {
+      const status = (err as { status?: number })?.status;
+      // 401/403/400/404 属于确定性客户端/鉴权错误，直接失败不再盲目重试
+      if ((status && status >= 400 && status < 500) || retries >= maxRetries) {
         const error = err instanceof Error ? err : new Error(String(err));
         callbacks.onError?.(error);
         throw error;

@@ -1,75 +1,18 @@
 """RAG 问答 API 路由 — 对接 ai_service"""
 
-import asyncio
-import time
+import json
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.deps import get_current_user_id, require_admin, success_response
 from app.services.rag_service import RAGService
-from app.services.user_service import UserService
 
 router = APIRouter(prefix="/api/ai", tags=["RAG 问答"])
-
-
-def _success(data=None, message="success"):
-    """统一成功响应"""
-    return {
-        "code": 200,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time()),
-    }
-
-
-def _error(code: int, message: str):
-    """统一错误响应"""
-    return {
-        "code": code,
-        "message": message,
-        "data": None,
-        "timestamp": int(time.time()),
-    }
-
-
-def _get_current_user(authorization: str = Header(None)) -> int:
-    """从 JWT 令牌中解析当前用户ID"""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="未提供认证令牌")
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="认证令牌格式错误")
-
-    payload = UserService.decode_access_token(token)
-    if payload is None:
-        raise HTTPException(status_code=401, detail="认证令牌无效或已过期")
-
-    user_id = payload.get("user_id")
-    if user_id is None:
-        raise HTTPException(status_code=401, detail="认证令牌无效")
-
-    return user_id
-
-
-def _require_admin(authorization: str = Header(None)) -> dict:
-    """验证 JWT 并确保角色为 admin"""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="未提供认证令牌")
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=401, detail="认证令牌格式错误")
-
-    payload = UserService.decode_access_token(token)
-    if payload is None:
-        raise HTTPException(status_code=401, detail="认证令牌无效或已过期")
-
-    if payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="无权限访问，需要管理员角色")
-
-    return payload
+_success = success_response
+_get_current_user = get_current_user_id
+_require_admin = require_admin
 
 
 # ─── 请求 / 响应模型 ───────────────────────────────────
@@ -101,16 +44,9 @@ async def query_stream(
     question: str,
     top_k: int = 5,
     history: str = "",
-    speed: int = 10,
     user_id: int = Depends(_get_current_user),
 ):
-    """SSE 流式 RAG 问答查询
-
-    ``history`` 为 JSON 编码的历史轮次数组，用于多轮对话指代消解。
-    ``speed`` 为令牌节流速度（token/秒），默认 10，范围 1-100。
-    """
-    import json
-
+    """真 SSE 实时流式 RAG 问答查询（收到上游事件立即透传，消除假流式攒批延迟）"""
     parsed_history: list[dict] = []
     if history:
         try:
@@ -125,35 +61,14 @@ async def query_stream(
             parsed_history = []
 
     async def event_generator():
-        token_buffer: list[str] = []
-        done_event: str | None = None
-        speed_tokens_per_sec: int = max(1, min(speed, 100))
-
-        async for event in RAGService.query_stream(
-            question=question, top_k=top_k, history=parsed_history
-        ):
-            try:
-                obj = json.loads(event)
-            except (ValueError, TypeError):
+        try:
+            async for event in RAGService.query_stream(
+                question=question, top_k=top_k, history=parsed_history
+            ):
                 yield f"data: {event}\n\n"
-                continue
-
-            if "content" in obj:
-                token_buffer.append(event)
-            elif "data" in obj:
-                yield f"data: {event}\n\n"
-            elif "answer" in obj:
-                done_event = event
-            else:
-                yield f"data: {event}\n\n"
-
-        delay = 1.0 / speed_tokens_per_sec
-        for token in token_buffer:
-            yield f"data: {token}\n\n"
-            await asyncio.sleep(delay)
-
-        if done_event:
-            yield f"data: {done_event}\n\n"
+        except Exception as exc:
+            err_payload = json.dumps({"message": f"AI 流式服务异常: {exc}"}, ensure_ascii=False)
+            yield f"event: error\ndata: {err_payload}\n\n"
 
     return StreamingResponse(
         event_generator(),
