@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-一个校园知识库问答系统。前端用 React + TypeScript，后端拆成两个 FastAPI 服务：业务后端负责账号、文档管理和会话持久化，AI 服务负责文档切片、混合检索和流式生成。
+一个通用文档知识库问答系统。前端用 React + TypeScript，后端拆成两个 FastAPI 服务：业务后端负责账号、文档管理和会话持久化，AI 服务负责文档切片、混合检索和流式生成。
 
 ## 整体结构
 
@@ -31,7 +31,7 @@ flowchart LR
 
 ## 检索评测记录
 
-本地用 340 篇校园公开文档（切分后 2,017 个文本块）和 50 道测试题（40 道可答 + 10 道域外问题）跑了一轮检索对比：
+本地用 340 篇中文公开文档（切分后 2,017 个文本块）和 50 道测试题（40 道可答 + 10 道域外问题）跑了一轮检索对比：
 
 | 方案 | Hit@5 | MRR@5 | 平均检索耗时 |
 | :--- | ---: | ---: | ---: |
@@ -89,7 +89,7 @@ npm run dev
 
 ### 3. 导入知识库
 
-仓库本身不带语料文件。把自己的 `.md` / `.txt` 按分类放进 `knowledge_docs/` 子目录（或者从 Releases 下载 `knowledge_docs-seed.zip` 解压进去），然后在文档页点「重建索引」即可。
+仓库本身不带语料文件。把自己的 `.md` / `.txt` 按分类放进 `knowledge_docs/` 子目录，或者通过网页端上传 PDF / DOC / DOCX / TXT，再点「重建索引」即可开始问答。
 
 ## 测试
 

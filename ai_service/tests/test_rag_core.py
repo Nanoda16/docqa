@@ -22,16 +22,16 @@ from main import _validate_file_path  # noqa: E402
 
 
 def test_small_talk_does_not_falsely_trigger_on_domain_queries():
-    """P0 修复验证：寒暄检测不得误杀含 hi 子串的英文词或带礼貌用语的正常校园问题。"""
+    """P0 修复验证：寒暄检测不得误杀含 hi 子串的英文词或带礼貌用语的正常业务问题。"""
     assert RAGPipeline._is_small_talk("你好") is True
     assert RAGPipeline._is_small_talk("Hi!") is True
     assert RAGPipeline._is_small_talk("谢谢！") is True
 
     # 下列正常提问绝对不能被寒暄短路拦截
-    assert RAGPipeline._is_small_talk("history of the university") is False
-    assert RAGPipeline._is_small_talk("which library is open") is False
-    assert RAGPipeline._is_small_talk("你好，请问图书馆几点开门？") is False
-    assert RAGPipeline._is_small_talk("转专业政策是什么？谢谢") is False
+    assert RAGPipeline._is_small_talk("history of release policy") is False
+    assert RAGPipeline._is_small_talk("which api supports streaming") is False
+    assert RAGPipeline._is_small_talk("你好，请问报销审批流程是什么？") is False
+    assert RAGPipeline._is_small_talk("版本发布规范是什么？谢谢") is False
 
 
 def test_vector_store_delete_last_doc_and_reload_safe(tmp_path, monkeypatch):
@@ -57,18 +57,18 @@ def test_bm25_and_rrf_fusion():
     bm25 = BM25Retriever()
     bm25.build(
         corpus=[
-            "河海大学图书馆每天早上八点开放，晚上十点闭馆。",
-            "本科生转专业申请需在每年春季学期第二周提交教务处。",
-            "计算机与软件学院设有软件工程和人工智能专业。",
+            "差旅报销单需在行程结束后十五个工作日内提交财务审批。",
+            "生产环境发布前必须通过自动化回归测试并完成双人复核。",
+            "内部微服务接口统一使用请求头令牌进行身份校验。",
         ],
         chunk_ids=["d1_0", "d2_0", "d3_0"],
     )
-    sparse = bm25.retrieve("图书馆开放时间", top_k=3)
+    sparse = bm25.retrieve("差旅报销审批期限", top_k=3)
     assert sparse and sparse[0][0] == "d1_0"
 
     dense = [
-        {"doc_id": "d1", "chunk_index": 0, "score": 0.85, "content": "图书馆开放"},
-        {"doc_id": "d2", "chunk_index": 0, "score": 0.40, "content": "转专业"},
+        {"doc_id": "d1", "chunk_index": 0, "score": 0.85, "content": "差旅报销审批"},
+        {"doc_id": "d2", "chunk_index": 0, "score": 0.40, "content": "生产环境发布"},
     ]
     fused = rrf_fuse(dense, sparse, k=60.0, top_k=3)
     assert fused[0][0] == "d1_0"
@@ -76,8 +76,8 @@ def test_bm25_and_rrf_fusion():
 
 def test_citation_validator_strips_hallucinated_refs():
     """验证引用后校验会保留合法 [S1] 并剔除越界幻觉引用 [S9]。"""
-    chunks = [{"doc_id": "d1", "title": "图书馆指南", "content": "8:00 开放"}]
-    res = validate_citations("图书馆早上八点开放[S1]，周末延长[S9]。", chunks)
+    chunks = [{"doc_id": "d1", "title": "报销管理规范", "content": "15 个工作日内提交"}]
+    res = validate_citations("差旅报销需在 15 个工作日内提交[S1]，超期自动驳回[S9]。", chunks)
     assert res["invalid_count"] == 1
     assert "[S1]" in res["answer"]
     assert "[S9]" not in res["answer"]

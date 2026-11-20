@@ -36,9 +36,9 @@ interface Session {
 }
 
 const SUGGESTIONS = [
-  '河海大学是哪一年创办的？',
-  '图书馆的开放时间是什么时候？',
-  '计算机学院的本科专业有哪些？',
+  '知识库里有哪些核心流程或操作规范？',
+  '混合检索和引用校验是怎么工作的？',
+  '如何上传新文档并重建索引？',
 ];
 
 export default function Chat() {
@@ -256,11 +256,11 @@ export default function Chat() {
             ]);
           } else {
             // Simulate AI answer for demo (in real scenario, would call RAG engine)
-            const answer = `关于"${question}"，我暂时没有找到匹配的校园资料。这是系统演示回复，实际接入 RAG 后会根据知识库生成回答。`;
+            const answer = `关于"${question}"，我暂时没有找到匹配的文档资料。这是系统演示回复，实际接入 RAG 后会根据知识库生成回答。`;
             await api.post('/qa/answer', {
               record_id: res.data.id,
               answer,
-              sources: [{ title: '校园知识库', url: '#' }],
+              sources: [{ title: '文档知识库', url: '#' }],
               tokens_used: 120,
               duration_ms: 800,
             });
@@ -271,7 +271,7 @@ export default function Chat() {
                 role: 'ai',
                 content: answer,
                 recordId: res.data.id,
-                sources: [{ title: '校园知识库', url: '#' }],
+                sources: [{ title: '文档知识库', url: '#' }],
               },
             ]);
           }
@@ -604,7 +604,7 @@ export default function Chat() {
             <Input.TextArea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="输入关于河海大学的问题…"
+              placeholder="输入你想查询的问题…"
               autoSize={{ minRows: 1, maxRows: 5 }}
               variant="borderless"
               onPressEnter={(e) => {

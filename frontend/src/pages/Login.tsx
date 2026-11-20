@@ -93,7 +93,7 @@ export default function Login() {
           <Input placeholder="展示名称" />
         </Form.Item>
         <Form.Item name="email" label="邮箱（可选）">
-          <Input prefix={<MailOutlined className="text-ink-3" />} placeholder="name@hhu.edu.cn" />
+          <Input prefix={<MailOutlined className="text-ink-3" />} placeholder="name@example.com" />
         </Form.Item>
       </div>
       <Button type="primary" htmlType="submit" loading={loading} block className="mt-1">
@@ -111,8 +111,8 @@ export default function Login() {
             问
           </span>
           <div className="leading-tight">
-            <div className="text-[15px] font-semibold tracking-tight">校园问答</div>
-            <div className="eyebrow mt-1">CAMPUS KNOWLEDGE · RAG</div>
+            <div className="text-[15px] font-semibold tracking-tight">知识库问答</div>
+            <div className="eyebrow mt-1">KNOWLEDGE BASE · RAG</div>
           </div>
         </div>
 
@@ -120,7 +120,7 @@ export default function Login() {
           <div className="w-9 h-[2px] bg-accent mb-6" aria-hidden />
           <div className="eyebrow mb-4">retrieval augmented generation</div>
           <h1 className="text-[30px] leading-[1.25] font-semibold tracking-[-0.022em]">
-            把校园文件整理成
+            把零散文档整理成
             <br />
             可以追问的答案。
           </h1>
@@ -146,7 +146,7 @@ export default function Login() {
           </div>
         </div>
 
-        <div className="eyebrow">hohai university · 2026</div>
+        <div className="eyebrow">knowledge base · 2026</div>
       </section>
 
       {/* ── 右：表单 ─────────────────────────────────────────── */}
@@ -158,8 +158,8 @@ export default function Login() {
               问
             </span>
             <div className="leading-tight">
-              <div className="text-[15px] font-semibold tracking-tight">校园问答</div>
-              <div className="eyebrow mt-1">CAMPUS · RAG</div>
+              <div className="text-[15px] font-semibold tracking-tight">知识库问答</div>
+              <div className="eyebrow mt-1">KNOWLEDGE · RAG</div>
             </div>
           </div>
 

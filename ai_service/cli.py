@@ -1,11 +1,11 @@
 """
-CLI RAG script — standalone question-answering tool for the Hohai University
+CLI RAG script — standalone question-answering tool for the document
 knowledge base.
 
 Usage
 -----
     python cli.py --ask "问题"        Single question mode
-    python cli.py --test              Test mode (10 pre-defined questions)
+    python cli.py --test              Test mode (sample questions)
     python cli.py                     Interactive mode
     python cli.py --rebuild           Force rebuild index, then exit
     python cli.py --index             Build index only, do not ask
@@ -52,49 +52,21 @@ logging.basicConfig(
 logger = logging.getLogger("cli")
 
 # ---------------------------------------------------------------------------
-# Test questions (from the instructor's specification)
+# Sample test questions (customize to match your own knowledge_docs corpus)
 # ---------------------------------------------------------------------------
 
 TEST_QUESTIONS: list[dict] = [
     {
-        "question": "河海大学的校训是什么？",
-        "keywords": ["艰苦朴素", "实事求是", "严格要求", "勇于探索"],
+        "question": "当前知识库支持哪些文档格式？",
+        "keywords": ["PDF", "TXT"],
     },
     {
-        "question": "河海大学是哪一年创办的？",
-        "keywords": ["1915"],
+        "question": "混合检索是如何合并召回结果的？",
+        "keywords": ["RRF"],
     },
     {
-        "question": "河海大学的创办人是谁？",
-        "keywords": ["张謇"],
-    },
-    {
-        "question": "河海大学有几个校区？分别在哪些城市？",
-        "keywords": ["南京", "常州"],
-    },
-    {
-        "question": "河海大学的首任院长是谁？",
-        "keywords": ["钱正英"],
-    },
-    {
-        "question": "河海大学的前身是什么？",
-        "keywords": ["河海工程专门学校"],
-    },
-    {
-        "question": "河海大学的校庆日是哪一天？",
-        "keywords": ["10月27日"],
-    },
-    {
-        "question": "河海大学的校歌是什么？",
-        "keywords": ["大哉河海奔前程"],
-    },
-    {
-        "question": "河海大学是哪一年恢复校名的？",
-        "keywords": ["1985"],
-    },
-    {
-        "question": "河海大学有多少个学科进入ESI世界排名前1%？",
-        "keywords": ["10"],
+        "question": "回答中的引用编号是如何校验的？",
+        "keywords": ["引用"],
     },
 ]
 
@@ -322,15 +294,15 @@ def cmd_index(chunk_size: int, overlap: int) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="河海大学 RAG 知识问答命令行工具",
+        description="通用 RAG 知识库问答命令行工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例：\n"
-            "  python cli.py --ask \"河海大学的校训是什么？\"\n"
+            "  python cli.py --ask \"文档里规定的审批流程是什么？\"\n"
             "  python cli.py --test\n"
             "  python cli.py --rebuild\n"
             "  python cli.py --index\n"
-            "  python cli.py --chunk-size 300 --overlap 30 --ask \"校训是什么？\"\n"
+            "  python cli.py --chunk-size 300 --overlap 30 --ask \"接口鉴权方式是什么？\"\n"
         ),
     )
 

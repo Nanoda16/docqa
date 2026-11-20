@@ -99,7 +99,7 @@ class Retriever:
 
         if not self._is_ready():
             # Empty knowledge base — nothing to retrieve yet.  Returning an
-            # empty list lets the caller answer "未找到相关校园信息" instead of
+            # empty list lets the caller answer "未找到相关文档信息" instead of
             # surfacing a 500 on a freshly installed instance.
             self.low_confidence = False
             return []

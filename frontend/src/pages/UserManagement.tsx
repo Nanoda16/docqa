@@ -78,8 +78,8 @@ export default function UserManagement() {
           allowClear
           style={{ width: 120 }}
           options={[
-            { label: '学生', value: 'student' },
-            { label: '教师', value: 'teacher' },
+            { label: '普通用户', value: 'student' },
+            { label: '编辑者', value: 'teacher' },
             { label: '管理员', value: 'admin' },
           ]}
         />
@@ -134,8 +134,8 @@ export default function UserManagement() {
                   style={{ width: 96 }}
                   onChange={(v) => updateRole(r.id, v)}
                   options={[
-                    { label: '学生', value: 'student' },
-                    { label: '教师', value: 'teacher' },
+                    { label: '普通用户', value: 'student' },
+                    { label: '编辑者', value: 'teacher' },
                     { label: '管理员', value: 'admin' },
                   ]}
                 />
@@ -218,8 +218,8 @@ export default function UserManagement() {
             <Form.Item label="角色" name="role" initialValue="student">
               <Select
                 options={[
-                  { label: '学生', value: 'student' },
-                  { label: '教师', value: 'teacher' },
+                  { label: '普通用户', value: 'student' },
+                  { label: '编辑者', value: 'teacher' },
                   { label: '管理员', value: 'admin' },
                 ]}
               />

@@ -61,7 +61,7 @@ export default function Profile() {
           </h3>
           <p className="mt-1 text-[12.5px] text-ink-3">{user?.email || '未设置邮箱'}</p>
           <div className="mt-4 eyebrow">
-            {user?.role === 'admin' ? 'administrator' : user?.role === 'teacher' ? 'teacher' : 'student'}
+            {user?.role === 'admin' ? 'administrator' : user?.role === 'teacher' ? 'editor' : 'member'}
           </div>
         </div>
 

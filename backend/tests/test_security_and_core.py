@@ -106,7 +106,7 @@ def test_qa_session_idor_isolation_and_history_schema(client):
     # 用户 A 提问并保存回答
     ask = tc.post(
         "/api/qa/ask",
-        params={"question": "图书馆几点开门？", "session_id": "sess-alice-1"},
+        params={"question": "报销审批流程是什么？", "session_id": "sess-alice-1"},
         headers=_auth_header(token_a),
     )
     assert ask.status_code == 200
@@ -114,7 +114,7 @@ def test_qa_session_idor_isolation_and_history_schema(client):
 
     ans = tc.post(
         "/api/qa/answer",
-        json={"record_id": rec_id, "answer": "图书馆 8:00 开放。", "sources": []},
+        json={"record_id": rec_id, "answer": "需在 15 个工作日内提交审批。", "sources": []},
         headers=_auth_header(token_a),
     )
     assert ans.status_code == 200
@@ -139,7 +139,7 @@ def test_qa_session_idor_isolation_and_history_schema(client):
     assert len(items) == 1
     assert items[0]["session_id"] == "sess-alice-1"
     assert items[0]["question_count"] == 1
-    assert items[0]["last_question"] == "图书馆几点开门？"
+    assert items[0]["last_question"] == "报销审批流程是什么？"
     assert items[0]["updated_at"]
 
 
@@ -155,7 +155,7 @@ def test_document_update_blocks_idor_and_strips_client_file_path(client, monkeyp
 
     create = tc.post(
         "/api/document",
-        json={"title": "选课指南", "content": "内容", "file_path": "/etc/passwd"},
+        json={"title": "接口鉴权规范", "content": "内容", "file_path": "/etc/passwd"},
         headers=_auth_header(token_a),
     )
     assert create.status_code == 202

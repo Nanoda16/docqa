@@ -105,9 +105,9 @@ export default function AppLayout() {
             </span>
             <span className="leading-tight">
               <span className="block text-[15px] font-semibold tracking-tight text-ink-1">
-                校园问答
+                知识库问答
               </span>
-              <span className="eyebrow block mt-1">CAMPUS · RAG</span>
+              <span className="eyebrow block mt-1">KNOWLEDGE · RAG</span>
             </span>
           </button>
         </div>
@@ -146,7 +146,7 @@ export default function AppLayout() {
                 {user?.nickname || user?.username || '未登录'}
               </div>
               <div className="eyebrow mt-1 truncate">
-                {user?.role === 'admin' ? 'administrator' : 'student'}
+                {user?.role === 'admin' ? 'administrator' : user?.role === 'teacher' ? 'editor' : 'member'}
               </div>
             </div>
             <Tooltip title="退出登录">
@@ -159,7 +159,7 @@ export default function AppLayout() {
               </button>
             </Tooltip>
           </div>
-          <div className="eyebrow text-center mt-3 text-ink-3/70">CampusQA · v1.0</div>
+          <div className="eyebrow text-center mt-3 text-ink-3/70">RAG QA · v1.0</div>
         </div>
       </aside>
 

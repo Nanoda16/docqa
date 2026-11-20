@@ -1,6 +1,6 @@
 -- ============================================================
 -- CampusQA 数据库初始化脚本
--- 河海大学校园知识问答助手
+-- 通用文档知识库 RAG 问答系统
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS campus_qa
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS kb_document (
     id              BIGINT          NOT NULL AUTO_INCREMENT  COMMENT '主键ID',
     title           VARCHAR(255)    NOT NULL                 COMMENT '文档标题',
     content         LONGTEXT        DEFAULT NULL             COMMENT '文档内容',
-    category        VARCHAR(50)     DEFAULT NULL             COMMENT '分类: news/academic/admin/departments等',
+    category        VARCHAR(50)     DEFAULT NULL             COMMENT '分类: policy/guide/tech/faq等',
     department      VARCHAR(100)    DEFAULT NULL             COMMENT '所属部门',
     file_type       VARCHAR(20)     DEFAULT NULL             COMMENT '文件类型: pdf/docx/txt/md',
     file_path       VARCHAR(500)    DEFAULT NULL             COMMENT '知识目录内的文件路径(唯一真相)',

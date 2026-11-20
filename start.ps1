@@ -6,7 +6,7 @@ $ai = Join-Path $root "ai_service"
 $dist = Join-Path $frontend "dist"
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "   CampusQA - HHU Campus Q&A Assistant" -ForegroundColor Cyan
+Write-Host "   CampusQA - RAG Knowledge Base Q&A Assistant" -ForegroundColor Cyan
 Write-Host "   AI Service:  http://localhost:8003" -ForegroundColor Gray
 Write-Host "   Backend:     http://localhost:8002" -ForegroundColor Gray
 Write-Host "   Swagger:     http://localhost:8002/docs" -ForegroundColor Gray

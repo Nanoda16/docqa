@@ -224,7 +224,7 @@ class RAGPipeline:
     # Rejection template
     # ------------------------------------------------------------------
 
-    _REJECTION_TEMPLATE = "根据现有校园知识库，暂未找到关于「{question}」的可靠信息。"
+    _REJECTION_TEMPLATE = "根据现有知识库，暂未找到关于「{question}」的可靠信息。"
 
     # ------------------------------------------------------------------
     # Small-talk detection
@@ -242,7 +242,7 @@ class RAGPipeline:
         """Return True ONLY when *query* itself is a standalone greeting/chit-chat.
 
         Avoids substring false positives such as 'history'/'which' (containing 'hi')
-        or polite domain questions like '你好，请问图书馆开放时间是什么？'.
+        or polite domain questions like '你好，请问报销审批流程是什么？'.
         """
         q = RAGPipeline._PUNCT_STRIP_RE.sub("", query.strip().lower())
         if not q or len(q) > 12:
@@ -392,7 +392,7 @@ class RAGPipeline:
         dict
             ``{"answer": str, "sources": list[dict]}``.
             When no relevant documents are found the *answer* will be
-            ``"未找到相关校园信息"`` and *sources* an empty list.
+            ``"未找到相关文档信息"`` and *sources* an empty list.
             When retrieval confidence is too low the *answer* will be a
             rejection message indicating the knowledge base does not contain
             reliable information on the query topic.
@@ -401,13 +401,12 @@ class RAGPipeline:
         if self._is_small_talk(query):
             return {
                 "answer": (
-                    "你好！我是河海大学校园知识问答助手 🤖\n\n"
-                    "我可以帮你查询关于河海大学的各种信息，比如：\n"
-                    "- 学校概况、校史、校训、校歌\n"
-                    "- 招生政策、考试报名、研究生通知\n"
-                    "- 学院介绍、专业设置、师资力量\n"
-                    "- 校园活动、讲座、学术会议\n\n"
-                    "直接告诉我你想了解什么就好！"
+                    "你好！我是文档知识库问答助手。\n\n"
+                    "你可以直接向我提问知识库中的内容，比如：\n"
+                    "- 制度规范、业务流程、操作手册\n"
+                    "- 技术文档、接口说明、架构设计\n"
+                    "- 公告通知、常见问题与归档资料\n\n"
+                    "直接告诉我你想了解什么就好。"
                 ),
                 "sources": [],
             }
@@ -422,7 +421,7 @@ class RAGPipeline:
         # 2. Graceful fallback when neither retriever returned anything
         if not chunks and not self._bm25_results:
             logger.info("No relevant chunks found for query: %s", query[:60])
-            return {"answer": "未找到相关校园信息", "sources": []}
+            return {"answer": "未找到相关文档信息", "sources": []}
 
         # 2b. Low-confidence rejection (OOD query)
         if getattr(self.retriever, "low_confidence", False):
@@ -527,13 +526,12 @@ class RAGPipeline:
             yield {
                 "type": "done",
                 "answer": (
-                    "你好！我是河海大学校园知识问答助手 🤖\n\n"
-                    "我可以帮你查询关于河海大学的各种信息，比如：\n"
-                    "- 学校概况、校史、校训、校歌\n"
-                    "- 招生政策、考试报名、研究生通知\n"
-                    "- 学院介绍、专业设置、师资力量\n"
-                    "- 校园活动、讲座、学术会议\n\n"
-                    "直接告诉我你想了解什么就好！"
+                    "你好！我是文档知识库问答助手。\n\n"
+                    "你可以直接向我提问知识库中的内容，比如：\n"
+                    "- 制度规范、业务流程、操作手册\n"
+                    "- 技术文档、接口说明、架构设计\n"
+                    "- 公告通知、常见问题与归档资料\n\n"
+                    "直接告诉我你想了解什么就好。"
                 ),
                 "sources": [],
             }
@@ -553,7 +551,7 @@ class RAGPipeline:
         if not chunks and not self._bm25_results:
             yield {
                 "type": "done",
-                "answer": "未找到相关校园信息",
+                "answer": "未找到相关文档信息",
                 "sources": [],
             }
             return
