@@ -112,19 +112,9 @@ if FRONTEND_DIR.exists():
 
 @app.on_event("startup")
 def on_startup():
-    """应用启动时创建数据库表并恢复重启前中断的 PROCESSING 文档。"""
+    """应用启动时创建数据库表并执行兼容迁移。"""
     try:
         init_db()
-        from app.database import SessionLocal
-        from app.services.document_service import IngestionService
-
-        db = SessionLocal()
-        try:
-            recovered = IngestionService.reset_processing_docs(db)
-            if recovered:
-                logger.warning("启动恢复了 %d 条卡在 PROCESSING 状态的文档", recovered)
-        finally:
-            db.close()
         print("✓ 数据库表初始化完成")
     except Exception as e:
         print(f"✗ 数据库表初始化失败: {e}")

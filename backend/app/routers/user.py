@@ -1,7 +1,5 @@
 """用户相关 API 路由"""
 
-import time
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -10,6 +8,7 @@ from app.database import get_db
 from app.deps import get_current_user, get_current_user_id, require_admin, success_response
 from app.models.user import User
 from app.schemas.user import (
+    ResetPasswordRequest,
     Token,
     UserCreate,
     UserLogin,
@@ -23,10 +22,18 @@ router = APIRouter(prefix="/api/user", tags=["用户管理"])
 _success = success_response
 _get_current_user = get_current_user_id
 
+_VALID_ROLES = ("user", "editor", "admin")
+
+
+@router.get("/setup-status")
+def get_setup_status(db: Session = Depends(get_db)):
+    """查询系统初始化状态（免登录：sys_user 表存在记录则为 true）"""
+    return _success(data={"initialized": UserService.is_initialized(db)})
+
 
 @router.post("/register")
 def register(data: UserCreate, db: Session = Depends(get_db)):
-    """公开用户注册（服务端强制 student 角色，忽略客户端传入的特权角色）"""
+    """公开用户注册（首用户自动成为 admin，后续注册强制为 user）"""
     try:
         user = UserService.register(db, data, allow_privileged_role=False)
         return _success(
@@ -43,7 +50,7 @@ def admin_create_user(
     _admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """管理员创建用户（允许指定 student/teacher/admin 角色）"""
+    """管理员创建用户（允许指定 user/editor/admin 角色）"""
     try:
         user = UserService.register(db, data, allow_privileged_role=True)
         return _success(
@@ -144,6 +151,20 @@ def get_user_list(
     )
 
 
+@router.put("/{target_user_id}/reset-password")
+def admin_reset_password(
+    target_user_id: int,
+    data: ResetPasswordRequest,
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """管理员重置指定用户密码"""
+    target = UserService.reset_password(db, target_user_id, data.new_password)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return _success(message="密码重置成功")
+
+
 @router.put("/{target_user_id}/role")
 def admin_update_role(
     target_user_id: int,
@@ -152,8 +173,8 @@ def admin_update_role(
     db: Session = Depends(get_db),
 ):
     """管理员修改用户角色"""
-    if role not in ("student", "teacher", "admin"):
-        raise HTTPException(status_code=400, detail="无效的角色: 必须是 student/teacher/admin")
+    if role not in _VALID_ROLES:
+        raise HTTPException(status_code=400, detail="无效的角色: 必须是 user/editor/admin")
     if target_user_id == current_user.id and role != "admin":
         raise HTTPException(status_code=400, detail="不能降低自己的管理员权限")
     target = UserService.get_by_id(db, target_user_id)

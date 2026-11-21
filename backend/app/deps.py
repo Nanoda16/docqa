@@ -54,3 +54,10 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="无权限访问，需要管理员角色")
     return user
+
+
+def require_editor_or_admin(user: User = Depends(get_current_user)) -> User:
+    """校验编辑者或管理员权限（用于文档索引同步与全量重建等操作）。"""
+    if user.role not in ("admin", "editor"):
+        raise HTTPException(status_code=403, detail="无权限访问，需要管理员或编辑者角色")
+    return user

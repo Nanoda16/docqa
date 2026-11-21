@@ -80,7 +80,7 @@ class RAGPipeline:
         self._generator: Generator | None = generator
         self.bm25_retriever = bm25_retriever or BM25Retriever()
         # Pipeline state: populated by query methods for downstream fusion
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
         self._bm25_results: list[tuple[str, float]] = []
         self._fused_results: list[tuple[str, float, list[float]]] = []
 
@@ -176,7 +176,9 @@ class RAGPipeline:
             return
 
         bm25_dir = self._bm25_dir()
-        if os.path.isdir(bm25_dir):
+        pkl_path = os.path.join(bm25_dir, "bm25.pkl")
+        meta_path = os.path.join(bm25_dir, "meta.json")
+        if os.path.isfile(pkl_path) and os.path.isfile(meta_path):
             try:
                 self.bm25_retriever.load(bm25_dir)
             except Exception:
@@ -216,8 +218,7 @@ class RAGPipeline:
             chunk_ids.append(_make_chunk_id(meta))
 
         self.bm25_retriever.build(texts, chunk_ids)
-        if texts:
-            self.bm25_retriever.save(self._bm25_dir())
+        self.bm25_retriever.save(self._bm25_dir())
         return len(texts)
 
     # ------------------------------------------------------------------
@@ -411,41 +412,37 @@ class RAGPipeline:
                 "sources": [],
             }
 
-        # 1. Dense retrieval (vectors) — candidate pool
-        depth = max(top_k, self._final_top_k)
-        chunks = self.retriever.retrieve(query, depth, min_score)
+        # 1-3. 在索引锁内完成双路检索与结果实体化，避免与并发索引重建交错
+        with self._lock:
+            depth = max(top_k, self._final_top_k)
+            chunks = self.retriever.retrieve(query, depth, min_score)
+            self._bm25_results = self.bm25_retriever.retrieve(query, depth)
 
-        # 1b. Sparse retrieval (BM25) — same candidate depth
-        self._bm25_results = self.bm25_retriever.retrieve(query, depth)
+            if not chunks and not self._bm25_results:
+                logger.info("No relevant chunks found for query: %s", query[:60])
+                return {"answer": "未找到相关文档信息", "sources": []}
 
-        # 2. Graceful fallback when neither retriever returned anything
-        if not chunks and not self._bm25_results:
-            logger.info("No relevant chunks found for query: %s", query[:60])
-            return {"answer": "未找到相关文档信息", "sources": []}
+            if getattr(self.retriever, "low_confidence", False):
+                logger.info(
+                    "OOD query rejected (low confidence): %s", query[:60]
+                )
+                return {
+                    "answer": self._REJECTION_TEMPLATE.format(question=query),
+                    "sources": [],
+                }
 
-        # 2b. Low-confidence rejection (OOD query)
-        if getattr(self.retriever, "low_confidence", False):
-            logger.info(
-                "OOD query rejected (low confidence): %s", query[:60]
+            self._fused_results = rrf_fuse(
+                chunks,
+                self._bm25_results,
+                k=self._rrf_k,
+                top_k=len(chunks) + len(self._bm25_results),
             )
-            return {
-                "answer": self._REJECTION_TEMPLATE.format(question=query),
-                "sources": [],
-            }
-
-        # 3. RRF fusion — merge the two ranked lists; if reranker is enabled, rerank full pool first
-        self._fused_results = rrf_fuse(
-            chunks,
-            self._bm25_results,
-            k=self._rrf_k,
-            top_k=len(chunks) + len(self._bm25_results),
-        )
-        logger.debug(
-            "RRF fusion: %d dense + %d BM25 → %d fused results for query: %s",
-            len(chunks), len(self._bm25_results), len(self._fused_results),
-            query[:60],
-        )
-        materialized = self._materialize_fusion(chunks, self._fused_results)
+            logger.debug(
+                "RRF fusion: %d dense + %d BM25 → %d fused results for query: %s",
+                len(chunks), len(self._bm25_results), len(self._fused_results),
+                query[:60],
+            )
+            materialized = self._materialize_fusion(chunks, self._fused_results)
 
         # 4. Optional cross-encoder rerank over full candidate pool, then truncate to final window
         if self._reranker_enabled and materialized:
@@ -540,48 +537,44 @@ class RAGPipeline:
         # 1. Status — retrieval phase
         yield {"type": "status", "message": "检索中..."}
 
-        # 2. Retrieve (dense) — candidate pool
-        depth = max(top_k, self._final_top_k)
-        chunks = self.retriever.retrieve(query, depth, min_score)
+        # 2-3c. 在索引锁内完成双路检索与结果实体化，生成流式输出前释放锁
+        with self._lock:
+            depth = max(top_k, self._final_top_k)
+            chunks = self.retriever.retrieve(query, depth, min_score)
+            self._bm25_results = self.bm25_retriever.retrieve(query, depth)
 
-        # 2b. Sparse retrieval (BM25) — same candidate depth
-        self._bm25_results = self.bm25_retriever.retrieve(query, depth)
+            if not chunks and not self._bm25_results:
+                yield {
+                    "type": "done",
+                    "answer": "未找到相关文档信息",
+                    "sources": [],
+                }
+                return
 
-        # 3. No results — short-circuit with fallback
-        if not chunks and not self._bm25_results:
-            yield {
-                "type": "done",
-                "answer": "未找到相关文档信息",
-                "sources": [],
-            }
-            return
+            if getattr(self.retriever, "low_confidence", False):
+                logger.info(
+                    "OOD query rejected (low confidence, stream): %s", query[:60]
+                )
+                yield {
+                    "type": "done",
+                    "answer": self._REJECTION_TEMPLATE.format(question=query),
+                    "sources": [],
+                }
+                return
 
-        # 3b. Low-confidence rejection (OOD query)
-        if getattr(self.retriever, "low_confidence", False):
-            logger.info(
-                "OOD query rejected (low confidence, stream): %s", query[:60]
+            self._fused_results = rrf_fuse(
+                chunks,
+                self._bm25_results,
+                k=self._rrf_k,
+                top_k=len(chunks) + len(self._bm25_results),
             )
-            yield {
-                "type": "done",
-                "answer": self._REJECTION_TEMPLATE.format(question=query),
-                "sources": [],
-            }
-            return
-
-        # 3c. RRF fusion — merge the two ranked lists, then keep the best few
-        self._fused_results = rrf_fuse(
-            chunks,
-            self._bm25_results,
-            k=self._rrf_k,
-            top_k=len(chunks) + len(self._bm25_results),
-        )
-        logger.debug(
-            "RRF fusion: %d dense + %d BM25 → %d fused results (stream)",
-            len(chunks), len(self._bm25_results), len(self._fused_results),
-        )
-        chunks = self._materialize_fusion(chunks, self._fused_results)[
-            : self._final_top_k
-        ]
+            logger.debug(
+                "RRF fusion: %d dense + %d BM25 → %d fused results (stream)",
+                len(chunks), len(self._bm25_results), len(self._fused_results),
+            )
+            chunks = self._materialize_fusion(chunks, self._fused_results)[
+                : self._final_top_k
+            ]
 
         # 3d. Optional cross-encoder rerank (off by default — see __init__)
         if self._reranker_enabled and chunks:
@@ -642,94 +635,80 @@ class RAGPipeline:
         in the vector store.  When *docs_dir* is ``None`` the default
         ``knowledge_docs/`` directory (relative to the project root) is
         used.
-
-        Parameters
-        ----------
-        docs_dir : str, optional
-            Path to the directory containing knowledge documents
-            (``.md`` / ``.txt`` files).  Defaults to the project-level
-            ``knowledge_docs/`` folder.
-        chunk_size : int
-            Maximum number of characters per chunk (default 500).
-        chunk_overlap : int
-            Overlap between consecutive chunks (default 50).
-
-        Returns
-        -------
-        dict
-            ``{"docs_count", "chunks_count", "indexed_count",
-            "time_seconds", "documents"}`` where ``documents`` is a manifest —
-            one entry per indexed file with ``doc_id``, ``title``,
-            ``category``, ``source_url``, ``file_path`` and ``chunk_count``.
-            The backend mirrors ``kb_document`` from this manifest, which is
-            what makes the folder the single source of truth.
         """
-        t0 = time.time()
+        with self._lock:
+            t0 = time.time()
 
-        # 1. Load documents from disk
-        docs = loader.load_knowledge_docs(docs_dir)
-        doc_count = len(docs)
-        logger.info("Loaded %d document(s)", doc_count)
+            # 1. Load documents from disk
+            docs = loader.load_knowledge_docs(docs_dir)
+            doc_count = len(docs)
+            logger.info("Loaded %d document(s)", doc_count)
 
-        if doc_count == 0:
-            # 知识库目录清空时，必须同步清空内存与磁盘上的旧 FAISS 与 BM25 索引
-            self.vector_store.index = None
-            self.vector_store.vectors = None
-            self.vector_store.metadata = []
+            if doc_count == 0:
+                # 知识库目录清空时，同步清空内存与磁盘上的旧 FAISS 与 BM25 索引
+                self.vector_store.index = None
+                self.vector_store.vectors = None
+                self.vector_store.metadata = []
+                self.vector_store.save()
+                self.bm25_retriever.build([], [])
+                self.bm25_retriever.save(self._bm25_dir())
+                elapsed = time.time() - t0
+                logger.warning("No documents found to index; cleared existing indexes")
+                return {
+                    "docs_count": 0,
+                    "chunks_count": 0,
+                    "indexed_count": 0,
+                    "time_seconds": round(elapsed, 2),
+                    "documents": [],
+                }
+
+            # 2. Split into overlapping chunks
+            chunks = chunker.chunk_docs(docs, chunk_size, chunk_overlap)
+            chunk_count = len(chunks)
+            logger.info("Created %d chunk(s)", chunk_count)
+
+            # 3. Embed all chunk texts in a single batch
+            texts = [c["content"] for c in chunks]
+            vectors = embedding.embed_texts(texts)
+
+            # 4. Build parallel metadata list
+            metadata = self._build_chunk_metadata(chunks)
+
+            # 5. Build / replace the FAISS index and persist
+            self.vector_store.build(vectors, metadata)
             self.vector_store.save()
-            self.bm25_retriever.build([], [])
+
+            # 6. Build BM25 keyword index in parallel
+            chunk_ids = [m["chunk_id"] for m in metadata]
+            self.bm25_retriever.build(texts, chunk_ids)
+            self.bm25_retriever.save(self._bm25_dir())
+
             elapsed = time.time() - t0
-            logger.warning("No documents found to index; cleared existing indexes")
+            logger.info("Indexed %d chunks (dense + BM25) in %.2fs", chunk_count, elapsed)
+
             return {
-                "docs_count": 0,
-                "chunks_count": 0,
-                "indexed_count": 0,
+                "docs_count": doc_count,
+                "chunks_count": chunk_count,
+                "indexed_count": chunk_count,
                 "time_seconds": round(elapsed, 2),
-                "documents": [],
+                "documents": self._build_manifest(docs, chunks),
             }
 
-        # 2. Split into overlapping chunks
-        chunks = chunker.chunk_docs(docs, chunk_size, chunk_overlap)
-        chunk_count = len(chunks)
-        logger.info("Created %d chunk(s)", chunk_count)
-
-        # 3. Embed all chunk texts in a single batch
-        texts = [c["content"] for c in chunks]
-        vectors = embedding.embed(texts)
-
-        # 4. Build parallel metadata list
-        metadata = [
+    @staticmethod
+    def _build_chunk_metadata(chunks: list[dict]) -> list[dict]:
+        """构建统一格式的 chunk 元数据列表（包含 chunk_id）。"""
+        return [
             {
                 "content": c["content"],
-                "doc_id": c["doc_id"],
+                "doc_id": str(c["doc_id"]),
                 "chunk_index": c["chunk_index"],
                 "chunk_id": f"{c['doc_id']}_{c['chunk_index']}",
-                "title": c["title"],
-                "category": c["category"],
-                "source_url": c["source_url"],
+                "title": c.get("title", ""),
+                "category": c.get("category", ""),
+                "source_url": c.get("source_url", ""),
             }
             for c in chunks
         ]
-
-        # 5. Build / replace the FAISS index and persist
-        self.vector_store.build(vectors, metadata)
-        self.vector_store.save()
-
-        # 6. Build BM25 keyword index in parallel
-        chunk_ids = [f"{c['doc_id']}_{c['chunk_index']}" for c in chunks]
-        self.bm25_retriever.build(texts, chunk_ids)
-        self.bm25_retriever.save(self._bm25_dir())
-
-        elapsed = time.time() - t0
-        logger.info("Indexed %d chunks (dense + BM25) in %.2fs", chunk_count, elapsed)
-
-        return {
-            "docs_count": doc_count,
-            "chunks_count": chunk_count,
-            "indexed_count": chunk_count,
-            "time_seconds": round(elapsed, 2),
-            "documents": self._build_manifest(docs, chunks),
-        }
 
     @staticmethod
     def _build_manifest(
@@ -754,6 +733,179 @@ class RAGPipeline:
 
         return list(manifest.values())
 
+    def _prepare_batch_index_payload(
+        self,
+        documents: list[dict],
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+    ) -> tuple[list[dict], list[dict], list[dict], list[str]]:
+        """切片并批量向量化一组文档，单篇异常记入 failed，其余正常合并批量编码。"""
+        # 同一批次内同 doc_id 仅保留最后一条，避免重复入库
+        deduped: dict[str, dict] = {}
+        invalid_docs: list[dict] = []
+        for raw_doc in documents:
+            doc_id = str(raw_doc.get("doc_id") or "").strip()
+            if not doc_id:
+                invalid_docs.append({"doc_id": "", "error": "doc_id 不能为空"})
+                continue
+            deduped[doc_id] = raw_doc
+
+        upserted: list[dict[str, Any]] = []
+        failed: list[dict[str, str]] = list(invalid_docs)
+        all_chunks: list[dict] = []
+
+        for doc_id, raw_doc in deduped.items():
+            content = str(raw_doc.get("content") or "")
+            if not content.strip():
+                failed.append({"doc_id": doc_id, "error": "文档内容为空"})
+                continue
+
+            normalized = {
+                "doc_id": doc_id,
+                "title": str(raw_doc.get("title") or ""),
+                "content": content,
+                "category": str(raw_doc.get("category") or ""),
+                "source_url": str(raw_doc.get("source_url") or ""),
+            }
+            try:
+                doc_chunks = chunker.chunk_docs([normalized], chunk_size, chunk_overlap)
+                if not doc_chunks:
+                    failed.append({"doc_id": doc_id, "error": "文档切片结果为空"})
+                    continue
+            except Exception as exc:
+                failed.append({"doc_id": doc_id, "error": f"文档切片失败: {exc}"})
+                continue
+
+            all_chunks.extend(doc_chunks)
+            upserted.append({"doc_id": doc_id, "chunk_count": len(doc_chunks)})
+
+        if not all_chunks:
+            return upserted, failed, [], []
+
+        texts = [c["content"] for c in all_chunks]
+        vectors = embedding.embed_texts(texts)
+        metadata = self._build_chunk_metadata(all_chunks)
+        chunk_ids = [m["chunk_id"] for m in metadata]
+        return upserted, failed, [{"vectors": vectors, "metadata": metadata, "texts": texts}], chunk_ids
+
+    def _collect_existing_doc_ids(self) -> set[str]:
+        """返回当前 VectorStore 中去重后的全部 doc_id 集合。"""
+        return {
+            str(m.get("doc_id", ""))
+            for m in self.vector_store.metadata
+            if m.get("doc_id") is not None and str(m.get("doc_id", "")) != ""
+        }
+
+    def get_index_state(self) -> dict[str, Any]:
+        """返回当前索引状态，供后端比对增量同步差异。"""
+        with self._lock:
+            doc_ids = sorted(self._collect_existing_doc_ids())
+            chunk_count = len(self.vector_store.metadata)
+            ready = bool(
+                self.vector_store.index is not None
+                and self.vector_store.index.ntotal > 0
+            )
+            return {
+                "doc_ids": doc_ids,
+                "doc_count": len(doc_ids),
+                "chunk_count": chunk_count,
+                "ready": ready,
+            }
+
+    def sync_index(
+        self,
+        upsert: list[dict],
+        delete_doc_ids: list[str],
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+    ) -> dict[str, Any]:
+        """增量同步：先清理待删除及待更新文档的旧 chunk，再批量切片向量化入库并落盘。"""
+        with self._lock:
+            delete_set = {str(d).strip() for d in delete_doc_ids if str(d).strip()}
+            upsert_ids = {
+                str(d.get("doc_id") or "").strip()
+                for d in upsert
+                if str(d.get("doc_id") or "").strip()
+            }
+            remove_ids = delete_set | upsert_ids
+
+            existing_doc_ids = self._collect_existing_doc_ids()
+            deleted_count = len((delete_set - upsert_ids) & existing_doc_ids)
+
+            if remove_ids:
+                # 同时从 VectorStore metadata 与 BM25 chunk_id 前缀定位需要移除的切片
+                removed_chunk_ids: set[str] = set()
+                for did in remove_ids:
+                    removed_chunk_ids.update(self.vector_store.chunk_ids_for_doc(did))
+                for cid in getattr(self.bm25_retriever, "_chunk_ids", []):
+                    if "_" in cid and cid.rsplit("_", 1)[0] in remove_ids:
+                        removed_chunk_ids.add(cid)
+
+                self.vector_store.delete_docs(remove_ids)
+                if removed_chunk_ids:
+                    self.bm25_retriever.remove_documents(removed_chunk_ids)
+
+            upserted, failed, packed, chunk_ids = self._prepare_batch_index_payload(
+                upsert, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+            )
+            if packed:
+                payload = packed[0]
+                self.vector_store.add(payload["vectors"], payload["metadata"])
+                self.bm25_retriever.add_documents(payload["texts"], chunk_ids)
+
+            self.vector_store.save()
+            self.bm25_retriever.save(self._bm25_dir())
+
+            total_docs = len(self._collect_existing_doc_ids())
+            total_chunks = len(self.vector_store.metadata)
+            return {
+                "upserted": upserted,
+                "failed": failed,
+                "deleted_count": deleted_count,
+                "total_docs": total_docs,
+                "total_chunks": total_chunks,
+            }
+
+    def rebuild_index(
+        self,
+        documents: list[dict],
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+    ) -> dict[str, Any]:
+        """基于权威文档列表全量重建 FAISS 与 BM25 索引并落盘。"""
+        with self._lock:
+            deleted_count = len(self._collect_existing_doc_ids())
+
+            # 清空内存中的旧索引
+            self.vector_store.index = None
+            self.vector_store.vectors = None
+            self.vector_store.metadata = []
+            self.bm25_retriever.build([], [])
+
+            upserted: list[dict[str, Any]] = []
+            failed: list[dict[str, str]] = []
+            if documents:
+                upserted, failed, packed, chunk_ids = self._prepare_batch_index_payload(
+                    documents, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+                )
+                if packed:
+                    payload = packed[0]
+                    self.vector_store.build(payload["vectors"], payload["metadata"])
+                    self.bm25_retriever.build(payload["texts"], chunk_ids)
+
+            self.vector_store.save()
+            self.bm25_retriever.save(self._bm25_dir())
+
+            total_docs = len(self._collect_existing_doc_ids())
+            total_chunks = len(self.vector_store.metadata)
+            return {
+                "upserted": upserted,
+                "failed": failed,
+                "deleted_count": deleted_count,
+                "total_docs": total_docs,
+                "total_chunks": total_chunks,
+            }
+
     def add_document(
         self,
         file_path: str,
@@ -761,27 +913,22 @@ class RAGPipeline:
         chunk_overlap: int = 50,
         doc_id: str | None = None,
     ) -> dict[str, Any]:
-        """Add a single document to the existing vector store.
+        """Add a single document to the existing vector store."""
+        with self._lock:
+            return self._add_document_unlocked(
+                file_path=file_path,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                doc_id=doc_id,
+            )
 
-        Parameters
-        ----------
-        file_path : str
-            Absolute or relative path to the document (``.md`` or ``.txt``).
-        chunk_size : int
-            Maximum number of characters per chunk (default 500).
-        chunk_overlap : int
-            Overlap between consecutive chunks (default 50).
-        doc_id : str, optional
-            Override the auto-generated document ID.  When provided, this
-            ID is used for artifact naming and vector store metadata,
-            enabling consistent cleanup via ``remove_document()``.
-
-        Returns
-        -------
-        dict
-            ``{"chunks_count", "indexed", "doc_id", "bm25_chunks", "title",
-            "category", "source_url", "file_path"}``.
-        """
+    def _add_document_unlocked(
+        self,
+        file_path: str,
+        chunk_size: int = 500,
+        chunk_overlap: int = 50,
+        doc_id: str | None = None,
+    ) -> dict[str, Any]:
         # 1. Load the single document
         doc = loader.load_file(file_path)
         doc_id = doc_id or doc["doc_id"]
@@ -806,30 +953,17 @@ class RAGPipeline:
 
         # 3. Embed
         texts = [c["content"] for c in chunks]
-        vectors = embedding.embed(texts)
+        vectors = embedding.embed_texts(texts)
 
         # 4. Metadata
-        metadata = [
-            {
-                "content": c["content"],
-                "doc_id": c["doc_id"],
-                "chunk_index": c["chunk_index"],
-                "title": c["title"],
-                "category": c["category"],
-                "source_url": c["source_url"],
-            }
-            for c in chunks
-        ]
+        metadata = self._build_chunk_metadata(chunks)
 
         # 5. Incrementally add to the existing index and persist
         self.vector_store.add(vectors, metadata)
         self.vector_store.save()
 
-        # 5b. Keep the sparse index in sync.  Without this a document uploaded
-        #     through the UI is invisible to keyword search forever, so the
-        #     "hybrid" retrieval silently degrades to dense-only for every
-        #     document that was not present at index-build time.
-        chunk_ids = [_make_chunk_id(m) for m in metadata]
+        # 5b. Keep the sparse index in sync
+        chunk_ids = [m["chunk_id"] for m in metadata]
         self.bm25_retriever.add_documents(texts, chunk_ids)
         self.bm25_retriever.save(self._bm25_dir())
 
@@ -857,108 +991,66 @@ class RAGPipeline:
         chunk_size: int = 500,
         chunk_overlap: int = 50,
     ) -> dict[str, Any]:
-        """Normalise an uploaded file into the knowledge directory and index it.
-
-        The uploaded file may be any format :func:`loader.load_file` understands
-        (``.md``/``.txt``/``.pdf``/``.docx``/``.doc``).  Its text is written
-        into the knowledge directory as markdown first, so that a later full
-        rebuild — which only scans that directory — still finds it.  Without
-        this step an uploaded document would silently disappear from the index
-        the next time the index is rebuilt.
-
-        Parameters
-        ----------
-        source_path : str
-            Path of the uploaded (staged) file.
-        category : str, optional
-            Sub-folder / category for the document (default ``uploads``).
-
-        Returns
-        -------
-        dict
-            Same payload as :meth:`add_document`, plus ``persisted_path``.
-        """
-        parsed = loader.load_file(source_path)
-        persisted_path = loader.write_content_doc(parsed, category=category)
-        result = self.add_document(
-            persisted_path,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-        )
-        result["persisted_path"] = persisted_path
-        logger.info(
-            "Imported %s -> %s (doc_id=%s, %d chunk(s))",
-            source_path,
-            persisted_path,
-            result["doc_id"],
-            result["chunks_count"],
-        )
-        return result
+        """Normalise an uploaded file into the knowledge directory and index it."""
+        with self._lock:
+            parsed = loader.load_file(source_path)
+            persisted_path = loader.write_content_doc(parsed, category=category)
+            result = self._add_document_unlocked(
+                persisted_path,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            result["persisted_path"] = persisted_path
+            logger.info(
+                "Imported %s -> %s (doc_id=%s, %d chunk(s))",
+                source_path,
+                persisted_path,
+                result["doc_id"],
+                result["chunks_count"],
+            )
+            return result
 
     # ------------------------------------------------------------------
     # Remove document
     # ------------------------------------------------------------------
 
     def remove_document(self, doc_id: str, delete_file: bool = True) -> dict[str, Any]:
-        """Remove a document from the index and (optionally) from disk.
+        """Remove a document from the index and (optionally) from disk."""
+        with self._lock:
+            removed_chunk_ids = self.vector_store.chunk_ids_for_doc(doc_id)
+            source_file = self._content_file_for_doc(doc_id)
 
-        Parameters
-        ----------
-        doc_id : str
-            Index document id (``md5`` of the file path).
-        delete_file : bool
-            Also delete the file from the knowledge directory (default
-            ``True``).  Pass ``False`` to re-index a document in place — for
-            example when the user asks to re-process it: the vectors must go,
-            but the file has to stay.
+            vectors_deleted = self.vector_store.delete(doc_id)
+            self.vector_store.save()
 
-        Returns
-        -------
-        dict
-            ``{"vectors_deleted": int, "bm25_deleted": int, "file_deleted": bool}``.
-        """
-        # Capture the chunk ids (and the on-disk file) before the vectors
-        # disappear: they are the only handles left for this document.
-        removed_chunk_ids = self.vector_store.chunk_ids_for_doc(doc_id)
-        source_file = self._content_file_for_doc(doc_id)
+            bm25_deleted = self.bm25_retriever.remove_documents(removed_chunk_ids)
+            if bm25_deleted or self.bm25_retriever.count == 0:
+                self.bm25_retriever.save(self._bm25_dir())
 
-        vectors_deleted = self.vector_store.delete(doc_id)
-        self.vector_store.save()
+            file_deleted = False
+            if delete_file and source_file:
+                try:
+                    os.unlink(source_file)
+                    file_deleted = True
+                    logger.info("Deleted knowledge file %s", source_file)
+                except OSError as exc:  # pragma: no cover - 极少数权限/占用情况
+                    logger.warning("Could not delete %s: %s", source_file, exc)
 
-        bm25_deleted = self.bm25_retriever.remove_documents(removed_chunk_ids)
-        if bm25_deleted:
-            self.bm25_retriever.save(self._bm25_dir())
-
-        file_deleted = False
-        if delete_file and source_file:
-            try:
-                os.unlink(source_file)
-                file_deleted = True
-                logger.info("Deleted knowledge file %s", source_file)
-            except OSError as exc:  # pragma: no cover - 极少数权限/占用情况
-                logger.warning("Could not delete %s: %s", source_file, exc)
-
-        logger.info(
-            "Removed document %s (vectors=%d, bm25=%d, file=%s)",
-            doc_id,
-            vectors_deleted,
-            bm25_deleted,
-            file_deleted,
-        )
-        return {
-            "vectors_deleted": vectors_deleted,
-            "bm25_deleted": bm25_deleted,
-            "file_deleted": file_deleted,
-        }
+            logger.info(
+                "Removed document %s (vectors=%d, bm25=%d, file=%s)",
+                doc_id,
+                vectors_deleted,
+                bm25_deleted,
+                file_deleted,
+            )
+            return {
+                "vectors_deleted": vectors_deleted,
+                "bm25_deleted": bm25_deleted,
+                "file_deleted": file_deleted,
+            }
 
     def _content_file_for_doc(self, doc_id: str) -> str | None:
-        """Find the knowledge-directory file that produced *doc_id*.
-
-        ``doc_id`` is ``md5`` of the file's absolute path, so the mapping is
-        recovered by re-scanning the directory.  Returns ``None`` when the file
-        is no longer on disk (already removed, or a legacy database-only
-        document).
-        """
+        """Find the knowledge-directory file that produced *doc_id*."""
         try:
             candidates = loader.load_knowledge_docs()
         except FileNotFoundError:
@@ -974,26 +1066,21 @@ class RAGPipeline:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> dict[str, Any]:
-        """Return combined pipeline and vector store statistics.
-
-        Returns
-        -------
-        dict
-            Top-level keys ``"pipeline"`` and ``"vector_store"``.
-        """
-        store_stats = self.vector_store.get_stats()
-        return {
-            "pipeline": {
-                "retriever_ready": self.vector_store.index is not None,
-                "dense_ready": self.vector_store.index is not None,
-                "bm25_ready": self.bm25_retriever.count > 0,
-                "bm25_chunks": self.bm25_retriever.count,
-                "candidate_depth": self._candidate_depth,
-                "final_top_k": self._final_top_k,
-                "rrf_k": self._rrf_k,
-                "reranker_enabled": self._reranker_enabled,
-                "default_top_k": self._candidate_depth,
-                "default_min_score": 0.0,
-            },
-            "vector_store": store_stats,
-        }
+        """Return combined pipeline and vector store statistics."""
+        with self._lock:
+            store_stats = self.vector_store.get_stats()
+            return {
+                "pipeline": {
+                    "retriever_ready": self.vector_store.index is not None,
+                    "dense_ready": self.vector_store.index is not None,
+                    "bm25_ready": self.bm25_retriever.count > 0,
+                    "bm25_chunks": self.bm25_retriever.count,
+                    "candidate_depth": self._candidate_depth,
+                    "final_top_k": self._final_top_k,
+                    "rrf_k": self._rrf_k,
+                    "reranker_enabled": self._reranker_enabled,
+                    "default_top_k": self._candidate_depth,
+                    "default_min_score": 0.0,
+                },
+                "vector_store": store_stats,
+            }

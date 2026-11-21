@@ -202,6 +202,8 @@ class BM25Retriever:
     def save(self, path: str) -> None:
         """Persist the BM25 index to disk.
 
+        空语料时删除旧的 ``bm25.pkl`` 与 ``meta.json``，防止清空索引后重启加载回旧数据。
+
         Parameters
         ----------
         path : str
@@ -209,23 +211,38 @@ class BM25Retriever:
             Two files are written: ``{path}/bm25.pkl`` and
             ``{path}/meta.json``.
         """
+        pkl_path = os.path.join(path, "bm25.pkl")
+        meta_path = os.path.join(path, "meta.json")
+
+        if self._bm25 is None or not self._chunk_ids:
+            for stale_file in (pkl_path, meta_path):
+                if os.path.isfile(stale_file):
+                    try:
+                        os.remove(stale_file)
+                    except OSError:
+                        pass
+            logger.info("BM25 index is empty; cleaned persisted files in %s", path)
+            return
+
         os.makedirs(path, exist_ok=True)
 
         # Save BM25 index via pickle (rank_bm25 objects are picklable)
-        pkl_path = os.path.join(path, "bm25.pkl")
-        with open(pkl_path, "wb") as f:
+        tmp_pkl = pkl_path + ".tmp"
+        with open(tmp_pkl, "wb") as f:
             pickle.dump(self._bm25, f)
+        os.replace(tmp_pkl, pkl_path)
 
         # Save metadata (chunk_ids, tokenized corpus, params)
-        meta_path = os.path.join(path, "meta.json")
         meta = {
             "chunk_ids": self._chunk_ids,
             "tokenized_corpus": self._tokenized_corpus,
             "k1": self._k1,
             "b": self._b,
         }
-        with open(meta_path, "w", encoding="utf-8") as f:
+        tmp_meta = meta_path + ".tmp"
+        with open(tmp_meta, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False)
+        os.replace(tmp_meta, meta_path)
 
         logger.info("Saved BM25 index to %s (%d docs)", path, self.count)
 

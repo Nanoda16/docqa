@@ -27,33 +27,40 @@ def _success(data=None, message="success"):
 def ask_question(
     question: str = Query(..., description="用户问题"),
     session_id: str | None = Query(None, description="会话ID"),
+    bypass_cache: bool = Query(False, description="是否跳过缓存重新检索"),
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    提交问题
-
-    先查缓存，缓存命中直接返回缓存结果；
-    缓存未命中时，返回问题信息（由上游RAG引擎生成回答后回填）。
-    """
+    """提交问题：仅当未指定 bypass_cache 时优先查用户点赞确认的优质缓存；命中后仍落库一条记录以支持点赞/点踩与会话回溯。"""
     # 1. 查缓存
-    cached = QACache.get_cached_answer(user_id, question)
+    cached = None if bypass_cache else QACache.get_cached_answer(user_id, question)
     if cached:
-        # 缓存命中，仅记录到会话历史
+        record = QAService.create(
+            db,
+            QARecordCreate(
+                user_id=user_id,
+                session_id=session_id,
+                question=question,
+                answer=cached["answer"],
+                sources=cached["sources"],
+            ),
+        )
         if session_id:
-            QACache.append_to_session(session_id, question, cached)
+            QACache.append_to_session(session_id, question, cached["answer"])
         QACache.increment_hot_count(question)
         return _success(
             data={
+                "id": record.id,
                 "question": question,
-                "answer": cached,
+                "answer": cached["answer"],
+                "sources": cached["sources"],
                 "from_cache": True,
                 "session_id": session_id,
             },
             message="缓存命中",
         )
 
-    # 2. 缓存未命中，创建记录（answer 为空，由后续 RAG 引擎填充）
+    # 2. 缓存未命中或跳过缓存，创建记录（answer 为空，由后续 RAG 引擎填充）
     record = QAService.create(
         db,
         QARecordCreate(
@@ -81,7 +88,7 @@ def save_answer(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """保存AI回答并写入缓存"""
+    """保存AI回答（仅持久化数据库与会话历史，由用户点赞确认后才写入问答缓存）"""
     record = QAService.get_by_id(db, data.record_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
@@ -97,9 +104,6 @@ def save_answer(
         record.duration_ms = data.duration_ms
     db.commit()
     db.refresh(record)
-
-    # 写入缓存
-    QACache.set_cached_answer(user_id, record.question, data.answer)
 
     # 更新会话缓存
     if record.session_id:
@@ -187,16 +191,45 @@ def get_hot_questions(limit: int = 10):
 @router.post("/feedback")
 def submit_feedback(
     record_id: int = Query(..., description="记录ID"),
-    feedback: int = Query(..., description="反馈: 1=有用, 2=无用"),
+    feedback: int = Query(..., description="反馈: 0=无, 1=有用, 2=无用"),
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """提交问答反馈"""
+    """提交问答反馈：点赞写入缓存，点踩删除缓存"""
     try:
         record = QAService.update_feedback(db, record_id, feedback, user_id=user_id)
         if not record:
             raise HTTPException(status_code=404, detail="记录不存在")
-        return _success(message="反馈已提交")
+        if feedback == 1:
+            if record.answer and record.answer.strip():
+                QACache.set_cached_answer(
+                    record.user_id,
+                    record.question,
+                    record.answer,
+                    sources=record.sources,
+                )
+                return _success(
+                    data={"record_id": record.id, "feedback": 1, "cache_action": "cached"},
+                    message="已点赞，回答已加入问答缓存",
+                )
+            return _success(
+                data={"record_id": record.id, "feedback": 1, "cache_action": "none"},
+                message="已点赞",
+            )
+        if feedback == 2:
+            deleted = QACache.delete_cached_answer(record.user_id, record.question)
+            return _success(
+                data={
+                    "record_id": record.id,
+                    "feedback": 2,
+                    "cache_action": "invalidated" if deleted else "none",
+                },
+                message="已记录反馈并从缓存移除" if deleted else "已记录反馈",
+            )
+        return _success(
+            data={"record_id": record.id, "feedback": feedback, "cache_action": "none"},
+            message="反馈已提交",
+        )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:

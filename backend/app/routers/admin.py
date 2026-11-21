@@ -1,9 +1,11 @@
 """管理后台 API — 缓存管理"""
 
+import json
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.deps import require_admin, success_response
@@ -150,6 +152,69 @@ def get_cache_stats(_=Depends(_require_admin)):
 # ─── 缓存 key 列表 ────────────────────────────────────
 
 
+def _classify_key(key: str) -> str:
+    """返回缓存键分类：qa / session / hot / other"""
+    if key.startswith(f"{PREFIX}qa:"):
+        return "qa"
+    if key.startswith(f"{PREFIX}session:"):
+        return "session"
+    if key.startswith(f"{PREFIX}hot:"):
+        return "hot"
+    return "other"
+
+
+def _validate_managed_key(key: str) -> str:
+    """校验缓存键前缀，防止操作非受管键"""
+    if not key or not key.startswith(PREFIX):
+        raise HTTPException(status_code=400, detail=f"无效缓存键：必须以 {PREFIX} 开头")
+    return key
+
+
+def _format_key_value(key: str, ktype: str) -> str:
+    """读取并格式化缓存键的可读内容预览（超长截断至 4000 字符）"""
+    preview = ""
+    try:
+        if ktype == "string":
+            raw = redis_client.get(key)
+            if raw is None:
+                preview = ""
+            else:
+                try:
+                    parsed = json.loads(raw)
+                    preview = json.dumps(parsed, ensure_ascii=False, indent=2)
+                except (ValueError, TypeError):
+                    preview = str(raw)
+        elif ktype == "list":
+            items = redis_client.lrange(key, 0, 49) or []
+            decoded_items = []
+            for item in items:
+                try:
+                    decoded_items.append(json.loads(item))
+                except (ValueError, TypeError):
+                    decoded_items.append(item)
+            preview = json.dumps(decoded_items, ensure_ascii=False, indent=2)
+        elif ktype == "zset":
+            items = redis_client.zrevrange(key, 0, 49, withscores=True) or []
+            preview = json.dumps(
+                [{"question": m, "score": s} for m, s in items],
+                ensure_ascii=False,
+                indent=2,
+            )
+        else:
+            preview = f"<{ktype}>"
+    except Exception as exc:
+        preview = f"<读取失败: {exc}>"
+
+    if len(preview) > 4000:
+        preview = preview[:4000] + "\n...（内容过长已截断）"
+    return preview
+
+
+class DeleteKeysRequest(BaseModel):
+    """批量删除缓存键请求"""
+    keys: list[str] = Field(..., min_length=1, description="待删除缓存键列表")
+
+
 @router.get("/cache/keys")
 def list_cache_keys(
     pattern: str = f"{PREFIX}*",
@@ -168,14 +233,86 @@ def list_cache_keys(
                     "type": ktype,
                     "ttl": ttl,
                     "label": _decode_key(key),
+                    "category": _classify_key(key),
                 }
             )
         except Exception:
-            result.append({"key": key, "type": "unknown", "ttl": -1})
+            result.append(
+                {
+                    "key": key,
+                    "type": "unknown",
+                    "ttl": -1,
+                    "label": _decode_key(key),
+                    "category": _classify_key(key),
+                }
+            )
 
     result.sort(key=lambda x: x["key"])
     return _success(
         data={"total": len(result), "keys": result, "pattern": pattern}
+    )
+
+
+@router.get("/cache/key")
+def get_cache_key_detail(
+    key: str = Query(..., description="完整缓存键"),
+    _=Depends(_require_admin),
+):
+    """查看单条缓存键详情与内容预览"""
+    _validate_managed_key(key)
+    ktype = redis_client.type(key)
+    ttl = redis_client.ttl(key)
+    if ktype == "none" or ttl == -2:
+        raise HTTPException(status_code=404, detail="缓存键不存在或已过期")
+
+    return _success(
+        data={
+            "key": key,
+            "label": _decode_key(key),
+            "category": _classify_key(key),
+            "type": ktype,
+            "ttl": ttl,
+            "value": _format_key_value(key, ktype),
+        }
+    )
+
+
+@router.delete("/cache/key")
+def delete_cache_key(
+    key: str = Query(..., description="待删除缓存键"),
+    _=Depends(_require_admin),
+):
+    """删除单条缓存键"""
+    _validate_managed_key(key)
+    deleted = int(redis_client.delete(key) or 0)
+    return _success(
+        data={"key": key, "deleted": deleted},
+        message="缓存键已删除" if deleted else "缓存键不存在或已过期",
+    )
+
+
+@router.post("/cache/keys/delete")
+def batch_delete_cache_keys(
+    data: DeleteKeysRequest,
+    _=Depends(_require_admin),
+):
+    """批量删除缓存键"""
+    unique_keys = list(dict.fromkeys(data.keys))
+    for k in unique_keys:
+        _validate_managed_key(k)
+
+    deleted = 0
+    try:
+        deleted = int(redis_client.delete(*unique_keys) or 0)
+    except Exception:
+        for k in unique_keys:
+            try:
+                deleted += int(redis_client.delete(k) or 0)
+            except Exception:
+                pass
+    return _success(
+        data={"deleted": deleted},
+        message=f"已删除 {deleted} 个缓存键",
     )
 
 

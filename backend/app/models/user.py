@@ -38,7 +38,7 @@ class User(Base):
     nickname: Mapped[str | None] = mapped_column(String(50), nullable=True)
     email: Mapped[str | None] = mapped_column(String(100), nullable=True)
     role: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="student"
+        String(20), nullable=False, server_default="user"
     )
     avatar: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[int] = mapped_column(

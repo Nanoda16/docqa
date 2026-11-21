@@ -1,63 +1,71 @@
-"""文档管理 API 路由"""
+"""文档管理 API 路由（文档管理与索引同步彻底解耦）"""
 
 import os
-import time
-import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.enums import DocumentStatus
+from app.deps import (
+    get_current_user_id,
+    require_admin,
+    require_editor_or_admin,
+    success_response,
+)
+from app.models.user import User
 from app.schemas.document import (
+    BatchDeleteRequest,
+    ClearDocumentsRequest,
     DocumentCreate,
+    DocumentListItem,
     DocumentResponse,
     DocumentUpdate,
 )
 from app.services.document_service import (
     DocumentService,
-    IngestionService,
-    UPLOAD_DIR as _UPLOAD_DIR,
+    SyncInProgressError,
+    extract_text_from_upload,
 )
-from app.services.rag_service import RAGService
 from app.services.user_service import UserService
-from app.routers.user import _get_current_user
 
 router = APIRouter(prefix="/api/document", tags=["文档管理"])
 
+_success = success_response
+_get_current_user = get_current_user_id
 
-def _success(data=None, message="success"):
-    return {
-        "code": 200,
-        "message": message,
-        "data": data,
-        "timestamp": int(time.time()),
-    }
+_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+_UPLOAD_CHUNK_SIZE = 1024 * 1024   # 1 MB
 
 
-@router.post("", status_code=202)
+@router.post("")
 def create_document(
     data: DocumentCreate,
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """创建文本文档（禁止客户端传入任意服务器 file_path，防任意文件读取入库）"""
-    safe_data = data.model_copy(update={"file_path": None, "status": DocumentStatus.UPLOADED})
-    doc = DocumentService.create(db, safe_data, user_id)
-    IngestionService().enqueue(doc.id, db)
+    """创建纯文本文档（即时落库为待索引，不触发后台向量化）"""
+    if not (data.title and data.title.strip()):
+        raise HTTPException(status_code=400, detail="文档标题不能为空")
+
+    safe_data = data.model_copy(
+        update={
+            "title": data.title.strip(),
+            "file_path": None,
+            "file_type": data.file_type or "txt",
+        }
+    )
+    try:
+        doc = DocumentService.create(db, safe_data, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return _success(
         data=DocumentResponse.model_validate(doc).model_dump(),
-        message="文档创建成功",
+        message="文档创建成功，待同步索引",
     )
 
 
-# ── 上传限制 ──────────────────────────────────────────────
-_ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
-_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-_UPLOAD_CHUNK_SIZE = 1024 * 1024   # 1 MB 分块读取，防止超大文件一次性读入内存导致 OOM
-
-
-@router.post("/upload", status_code=202)
+@router.post("/upload")
 def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(None),
@@ -66,76 +74,40 @@ def upload_document(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """上传文件并创建文档（流式分块限额 + 自动触发向量化入库）"""
-    # 1. 验证扩展名（大小写不敏感）
+    """上传文件并在请求内提取纯文本保存（不保留 uploads/ 临时文件，不自动触发向量化）"""
     original_filename = file.filename or "untitled"
-    stem, ext = os.path.splitext(original_filename)
-    ext_lower = ext.lower()
-    if ext_lower not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"不支持的文件类型: {ext}，仅支持 pdf/doc/docx/txt",
-        )
+    stem, _ = os.path.splitext(original_filename)
 
-    # 2. 流式分块写入临时 staging 文件并实时校验 50MB 上限，避免 OOM
-    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    safe_stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in stem)[:64]
-    safe_name = f"{uuid.uuid4().hex}_{safe_stem}{ext_lower}"
-    file_path = str((_UPLOAD_DIR / safe_name).resolve())
-
+    chunks: list[bytes] = []
     total_read = 0
-    txt_chunks: list[bytes] = []
+    while True:
+        chunk = file.file.read(_UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > _MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="文件大小超过 50MB 限制")
+        chunks.append(chunk)
+
+    raw_bytes = b"".join(chunks)
     try:
-        with open(file_path, "wb") as f:
-            while True:
-                chunk = file.file.read(_UPLOAD_CHUNK_SIZE)
-                if not chunk:
-                    break
-                total_read += len(chunk)
-                if total_read > _MAX_FILE_SIZE:
-                    raise HTTPException(status_code=400, detail="文件大小超过 50MB 限制")
-                f.write(chunk)
-                if ext_lower == ".txt":
-                    txt_chunks.append(chunk)
-    except Exception:
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
-        raise
+        file_type, extracted_text = extract_text_from_upload(original_filename, raw_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    # 4. 确定文件类型与标题
-    file_type = ext_lower.lstrip(".")
-    doc_title = title.strip() if title and title.strip() else stem
-
-    # 5. 创建文档记录
+    doc_title = title.strip() if title and title.strip() else (stem or "未命名文档")
     doc_data = DocumentCreate(
         title=doc_title,
+        content=extracted_text,
         file_type=file_type,
-        file_path=file_path,
-        category=category,
-        department=department,
-        status=DocumentStatus.UPLOADED,
+        file_path=None,
+        category=category.strip() if category and category.strip() else None,
+        department=department.strip() if department and department.strip() else None,
     )
     doc = DocumentService.create(db, doc_data, user_id)
-
-    # 6. 对 .txt 文件直接读取内容（便于关键字搜索）
-    if ext_lower == ".txt":
-        content_bytes = b"".join(txt_chunks)
-        try:
-            text_content = content_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            text_content = content_bytes.decode("gbk", errors="replace")
-        doc.content = text_content
-        db.commit()
-
-    # 7. 触发异步处理
-    IngestionService().enqueue(doc.id, db)
-
     return _success(
         data=DocumentResponse.model_validate(doc).model_dump(),
-        message="文档上传成功",
+        message="文档上传并解析成功，待同步索引",
     )
 
 
@@ -149,7 +121,7 @@ def get_document_list(
     keyword: str | None = None,
     db: Session = Depends(get_db),
 ):
-    """文档列表（分页、筛选）"""
+    """文档列表（分页、筛选，不返回大段正文 content）"""
     docs, total = DocumentService.get_list(
         db,
         page=page,
@@ -162,7 +134,7 @@ def get_document_list(
     return _success(
         data={
             "total": total,
-            "items": [DocumentResponse.model_validate(d).model_dump() for d in docs],
+            "items": [DocumentListItem.model_validate(d).model_dump() for d in docs],
             "page": page,
             "page_size": page_size,
         }
@@ -176,12 +148,115 @@ def get_categories(db: Session = Depends(get_db)):
     return _success(data={"categories": categories})
 
 
+@router.get("/sync-status")
+def get_sync_status(db: Session = Depends(get_db)):
+    """获取数据库文档与向量索引的同步状态"""
+    status_data = DocumentService.get_sync_status(db)
+    return _success(data=status_data)
+
+
+@router.post("/batch-delete")
+def batch_delete_documents(
+    data: BatchDeleteRequest,
+    user_id: int = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """批量删除文档（毫秒级删除 DB 记录）"""
+    ids = list(dict.fromkeys(data.ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的文档")
+
+    current_user = UserService.get_by_id(db, user_id)
+    is_admin = bool(current_user and current_user.role == "admin")
+
+    docs = DocumentService.get_all_documents(db)
+    target_docs = [d for d in docs if d.id in set(ids)]
+    if not is_admin:
+        unauthorized = [d.id for d in target_docs if d.created_by != user_id]
+        if unauthorized:
+            raise HTTPException(status_code=403, detail="无权限删除他人创建的文档")
+
+    deleted_count = DocumentService.batch_delete(db, ids)
+    return _success(
+        data={"deleted_count": deleted_count},
+        message=f"已删除 {deleted_count} 篇文档",
+    )
+
+
+@router.post("/clear")
+def clear_documents(
+    data: ClearDocumentsRequest = Body(default_factory=ClearDocumentsRequest),
+    _admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """按筛选条件或全量清空文档（仅管理员，毫秒级直接删 DB 记录）"""
+    category = data.category.strip() if data.category and data.category.strip() else None
+    keyword = data.keyword.strip() if data.keyword and data.keyword.strip() else None
+    deleted_count = DocumentService.clear_documents(
+        db,
+        category=category,
+        keyword=keyword,
+        status=data.status,
+    )
+    return _success(
+        data={"deleted_count": deleted_count},
+        message=f"已删除 {deleted_count} 篇文档",
+    )
+
+
+@router.post("/sync-index")
+def sync_index(
+    _user: User = Depends(require_editor_or_admin),
+    db: Session = Depends(get_db),
+):
+    """增量同步索引到 ai_service（仅 admin / editor）"""
+    try:
+        result = DocumentService.sync_index(db)
+    except SyncInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI 服务调用失败: {exc}")
+
+    return _success(
+        data=result,
+        message=(
+            f"同步完成：更新 {result['upserted_count']} 篇，"
+            f"清理 {result['deleted_count']} 篇，"
+            f"跳过 {result['skipped_count']} 篇"
+            + (f"，失败 {result['failed_count']} 篇" if result["failed_count"] else "")
+        ),
+    )
+
+
+@router.post("/rebuild-index")
+def rebuild_index(
+    _user: User = Depends(require_editor_or_admin),
+    db: Session = Depends(get_db),
+):
+    """严格基于 kb_document 全量记录重建索引（仅 admin / editor）"""
+    try:
+        result = DocumentService.rebuild_index(db)
+    except SyncInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI 服务调用失败: {exc}")
+
+    return _success(
+        data=result,
+        message=(
+            f"全量重建完成：成功 {result['upserted_count']} 篇，"
+            f"总切片 {result['total_chunks']} 个"
+            + (f"，失败 {result['failed_count']} 篇" if result["failed_count"] else "")
+        ),
+    )
+
+
 @router.get("/{document_id}")
 def get_document(
     document_id: int,
     db: Session = Depends(get_db),
 ):
-    """获取文档详情"""
+    """获取文档详情（含完整 content）"""
     doc = DocumentService.get_by_id(db, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -195,7 +270,7 @@ def update_document(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """更新文档（仅创建者或管理员可更新，且禁止客户端篡改内部文件路径与索引元数据）"""
+    """更新文档（仅创建者或管理员可更新）"""
     existing = DocumentService.get_by_id(db, document_id)
     if not existing:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -206,46 +281,14 @@ def update_document(
     safe_update = data.model_copy(
         update={"file_path": None, "vector_doc_id": None, "chunk_count": None, "status": None}
     )
-    doc = DocumentService.update(db, document_id, safe_update)
+    try:
+        doc = DocumentService.update(db, document_id, safe_update)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return _success(
         data=DocumentResponse.model_validate(doc).model_dump(),
         message="文档更新成功",
-    )
-
-
-@router.post("/{document_id}/reprocess")
-def reprocess_document(
-    document_id: int,
-    user_id: int = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    """重新处理文档：清空旧向量后重新入库"""
-    doc = DocumentService.get_by_id(db, document_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="文档不存在")
-
-    # 仅创建者或管理员可操作
-    current_user = UserService.get_by_id(db, user_id)
-    if doc.created_by != user_id and (not current_user or current_user.role != "admin"):
-        raise HTTPException(status_code=403, detail="无权限操作此文档")
-
-    # 清空 ai_service 中的旧向量，但保留知识目录里的文件
-    try:
-        RAGService.delete_doc(doc.vector_doc_id or str(doc.id), keep_file=True)
-    except Exception:
-        pass
-
-    # 重置状态并重新入队（vector_doc_id 保留，重新处理时原地重建索引）
-    doc.status = DocumentStatus.UPLOADED
-    doc.error_message = None
-    doc.chunk_count = 0
-    db.commit()
-
-    IngestionService().enqueue(doc.id, db)
-
-    return _success(
-        data=DocumentResponse.model_validate(doc).model_dump(),
-        message="文档已重新加入处理队列",
     )
 
 
@@ -255,8 +298,7 @@ def delete_document(
     user_id: int = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
-    """删除文档（同时清理索引和知识目录里的文件）"""
-    # 验证权限（仅创建者或管理员可删除）
+    """单条删除文档（仅创建者或管理员可删除，毫秒级删除 DB 记录）"""
     current_user = UserService.get_by_id(db, user_id)
     doc = DocumentService.get_by_id(db, document_id)
     if not doc:
@@ -264,52 +306,5 @@ def delete_document(
     if doc.created_by != user_id and (not current_user or current_user.role != "admin"):
         raise HTTPException(status_code=403, detail="无权限删除此文档")
 
-    vector_doc_id = doc.vector_doc_id or str(doc.id)
-
-    success = DocumentService.soft_delete(db, document_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="文档不存在")
-
-    # 通知 ai_service 清理索引条目和知识目录里的文件（fire-and-forget）
-    try:
-        RAGService.delete_doc(vector_doc_id)
-    except Exception:
-        pass
-
+    DocumentService.delete_document(db, document_id)
     return _success(message="文档已删除")
-
-
-@router.post("/rebuild-index")
-def rebuild_index(
-    user_id: int = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    """重建索引：扫描知识目录全量重建，并把数据库记录对齐到磁盘（仅管理员）
-
-    知识目录是内容的唯一真相。原先这里是从 MySQL 取正文重建，只能索引
-    ``kb_document.content`` 有内容的行（PDF/DOCX 上传时正文是空的），
-    而 ``GET /reindex`` 又只扫目录，两个入口会互相清空对方的内容。
-    现在统一走目录：重建完用返回的清单把 ``kb_document`` 对齐一遍。
-    """
-    # 1. 验证管理员权限
-    current_user = UserService.get_by_id(db, user_id)
-    if not current_user or current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="仅管理员可执行重建索引操作")
-
-    # 2. 让 ai_service 扫描知识目录重建
-    try:
-        result = RAGService.rebuild_index_from_directory()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"AI 服务调用失败: {exc}")
-
-    # 3. 把数据库记录对齐到目录扫描结果
-    sync = DocumentService.sync_from_manifest(db, result.get("documents", []))
-
-    return _success(
-        data={**result, "sync": sync},
-        message=(
-            f"重建索引完成: {result.get('docs_count', 0)} 篇文档, "
-            f"{result.get('chunks_count', 0)} 个切片；"
-            f"数据库新增 {sync['created']} / 更新 {sync['updated']} / 删除 {sync['deleted']}"
-        ),
-    )

@@ -88,6 +88,9 @@ class VectorStore:
         metadata : list[dict]
             Parallel list of metadata dicts, one per vector.
         """
+        if len(metadata) == 0 or vectors.shape[0] == 0:
+            return
+
         if self.index is None:
             self.build(vectors, metadata)
             return
@@ -190,6 +193,39 @@ class VectorStore:
                 found[cid] = dict(meta)
         return found
 
+    def delete_docs(self, doc_ids: list[str] | set[str]) -> int:
+        """批量移除多个 *doc_id* 对应的向量并仅重建一次 FAISS 索引。"""
+        target_ids = {str(d) for d in doc_ids if d is not None and str(d) != ""}
+        if not target_ids or self.index is None or not self.metadata:
+            return 0
+
+        keep_indices: list[int] = []
+        keep_metadata: list[dict] = []
+        deleted_count = 0
+
+        for i, meta in enumerate(self.metadata):
+            if str(meta.get("doc_id", "")) in target_ids:
+                deleted_count += 1
+            else:
+                keep_indices.append(i)
+                keep_metadata.append(meta)
+
+        if deleted_count == 0:
+            return 0
+
+        self.vectors = self.vectors[keep_indices]
+        self.metadata = keep_metadata
+
+        if len(self.vectors) > 0:
+            dim = self.vectors.shape[1]
+            self.index = faiss.IndexFlatIP(dim)
+            self.index.add(self.vectors)
+        else:
+            self.index = None
+            self.vectors = None
+
+        return deleted_count
+
     def delete(self, doc_id: str) -> int:
         """Remove all vectors belonging to *doc_id* and rebuild the index.
 
@@ -203,50 +239,24 @@ class VectorStore:
         int
             Number of deleted entries.
         """
-        if self.index is None or not self.metadata:
-            return 0
-
-        keep_indices: list[int] = []
-        keep_metadata: list[dict] = []
-        deleted_count = 0
-
-        for i, meta in enumerate(self.metadata):
-            if meta.get("doc_id") == doc_id:
-                deleted_count += 1
-            else:
-                keep_indices.append(i)
-                keep_metadata.append(meta)
-
-        if deleted_count == 0:
-            return 0
-
-        # Filter vectors
-        self.vectors = self.vectors[keep_indices]
-        self.metadata = keep_metadata
-
-        # Rebuild the FAISS index from scratch
-        if len(self.vectors) > 0:
-            dim = self.vectors.shape[1]
-            self.index = faiss.IndexFlatIP(dim)
-            self.index.add(self.vectors)
-        else:
-            self.index = None
-            self.vectors = None
-
-        return deleted_count
+        return self.delete_docs({str(doc_id)})
 
     def save(self) -> None:
-        """原子持久化 FAISS 索引与元数据（索引清空时同步删除磁盘旧 faiss.index，防重启长度错配 IndexError）。"""
+        """原子持久化 FAISS 索引与元数据（索引清空为 0 篇时同步删除旧 faiss.index 和 metadata.json）。"""
+        if self.index is None or self.index.ntotal == 0 or not self.metadata:
+            for stale_file in (self.index_path, self.meta_path):
+                if os.path.isfile(stale_file):
+                    try:
+                        os.remove(stale_file)
+                    except OSError:
+                        pass
+            return
+
         os.makedirs(os.path.dirname(self.index_path), exist_ok=True)
-        if self.index is not None and self.index.ntotal > 0:
-            tmp_idx = self.index_path + ".tmp"
-            faiss.write_index(self.index, tmp_idx)
-            os.replace(tmp_idx, self.index_path)
-        elif os.path.isfile(self.index_path):
-            try:
-                os.remove(self.index_path)
-            except OSError:
-                pass
+        tmp_idx = self.index_path + ".tmp"
+        faiss.write_index(self.index, tmp_idx)
+        os.replace(tmp_idx, self.index_path)
+
         tmp_meta = self.meta_path + ".tmp"
         with open(tmp_meta, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, ensure_ascii=False, indent=2)

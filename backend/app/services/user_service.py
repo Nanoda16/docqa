@@ -53,13 +53,28 @@ class UserService:
             return None
 
     @staticmethod
+    def is_initialized(db: Session) -> bool:
+        """系统是否已初始化（sys_user 表存在至少一条记录）"""
+        return db.query(User.id).first() is not None
+
+    @staticmethod
     def register(db: Session, data: UserCreate, *, allow_privileged_role: bool = False) -> User:
-        """用户注册（默认强制 student 角色，防止公开注册垂直越权为 admin）。"""
+        """用户注册。
+
+        公开注册（allow_privileged_role=False）时：
+        - 若 sys_user 表当前记录数为 0，自动赋予首个用户 admin 角色（首用户即管理员）；
+        - 若表非空，一律强制赋予 user 角色，防止垂直越权。
+        """
         existing = db.query(User).filter(User.username == data.username).first()
         if existing:
             raise ValueError("用户名已存在")
 
-        role = data.role if allow_privileged_role else "student"
+        if allow_privileged_role:
+            role = data.role
+        else:
+            is_first_user = db.query(User).count() == 0
+            role = "admin" if is_first_user else "user"
+
         user = User(
             username=data.username,
             password_hash=UserService.hash_password(data.password),
@@ -68,6 +83,17 @@ class UserService:
             role=role,
         )
         db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    @staticmethod
+    def reset_password(db: Session, user_id: int, new_password: str) -> User | None:
+        """重置指定用户密码"""
+        user = UserService.get_by_id(db, user_id)
+        if not user:
+            return None
+        user.password_hash = UserService.hash_password(new_password)
         db.commit()
         db.refresh(user)
         return user

@@ -302,11 +302,15 @@ def load_knowledge_docs(knowledge_dir: str | None = None) -> list[dict]:
     for text_path in _iter_text_files(knowledge_dir):
         file_path = str(text_path)
 
-        # Skip files that are too small (empty / minimal)
-        if os.path.getsize(file_path) < 50:
+        # 仅跳过完全空文件或清洗后纯空白的文档，短文档（>= 1 字符）必须保留
+        if os.path.getsize(file_path) == 0:
             continue
 
-        docs.append(_build_doc(file_path))
+        doc = _build_doc(file_path)
+        if not doc["content"].strip():
+            continue
+
+        docs.append(doc)
 
     return docs
 

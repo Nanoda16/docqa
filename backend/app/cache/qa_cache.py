@@ -32,25 +32,58 @@ class QACache:
         return f"{PREFIX}hot:questions"
 
     @staticmethod
-    def get_cached_answer(user_id: int, question: str) -> str | None:
-        """获取缓存的问答结果"""
+    def get_cached_answer(user_id: int, question: str) -> dict | None:
+        """获取缓存的问答结果，返回 {"answer": str, "sources": list}"""
         try:
             key = QACache._make_qa_key(user_id, question)
-            data = redis_client.get(key)
-            if data:
-                return data
+            raw = redis_client.get(key)
+            if not raw:
+                return None
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and "answer" in parsed:
+                    sources = parsed.get("sources")
+                    return {
+                        "answer": str(parsed.get("answer") or ""),
+                        "sources": sources if isinstance(sources, list) else [],
+                    }
+            except (ValueError, TypeError):
+                pass
+            # 兼容旧版纯文本缓存
+            return {"answer": str(raw), "sources": []}
         except Exception:
             pass
         return None
 
     @staticmethod
-    def set_cached_answer(user_id: int, question: str, answer: str) -> None:
-        """缓存问答结果"""
+    def set_cached_answer(
+        user_id: int,
+        question: str,
+        answer: str,
+        sources: list | None = None,
+        ttl: int | None = None,
+    ) -> None:
+        """将优质问答结果序列化为 JSON 写入缓存"""
         try:
             key = QACache._make_qa_key(user_id, question)
-            redis_client.setex(key, settings.CACHE_EXPIRE_SECONDS, answer)
+            payload = json.dumps(
+                {"answer": answer, "sources": sources or []},
+                ensure_ascii=False,
+            )
+            expire = ttl if ttl is not None else max(settings.CACHE_EXPIRE_SECONDS, 3600)
+            redis_client.setex(key, expire, payload)
         except Exception:
             pass
+
+    @staticmethod
+    def delete_cached_answer(user_id: int, question: str) -> bool:
+        """精准删除单条问答缓存，不存在时安全返回 False"""
+        try:
+            key = QACache._make_qa_key(user_id, question)
+            deleted = redis_client.delete(key)
+            return bool(deleted and int(deleted) > 0)
+        except Exception:
+            return False
 
     @staticmethod
     def get_session_history(session_id: str) -> list[dict] | None:
@@ -116,3 +149,22 @@ class QACache:
             ]
         except Exception:
             return []
+
+    @staticmethod
+    def clear_qa_cache() -> int:
+        """清空所有 Q&A 问答结果缓存（索引同步或重建后调用）"""
+        deleted = 0
+        try:
+            pattern = f"{PREFIX}qa:*"
+            cursor = 0
+            keys: list[str] = []
+            while True:
+                cursor, batch = redis_client.scan(cursor=cursor, match=pattern, count=500)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
+            if keys:
+                deleted = int(redis_client.delete(*keys) or 0)
+        except Exception:
+            pass
+        return deleted

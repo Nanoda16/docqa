@@ -103,6 +103,11 @@ def embed(texts: str | list[str]) -> np.ndarray:
     return np.asarray(embeddings, dtype=np.float32)
 
 
+def embed_texts(texts: str | list[str]) -> np.ndarray:
+    """批量将文本列表编码为 L2 归一化向量矩阵，供增量/全量索引使用。"""
+    return embed(texts)
+
+
 def embed_query(text: str, use_instruction: bool = False) -> np.ndarray:
     """Embed a single query string.
 

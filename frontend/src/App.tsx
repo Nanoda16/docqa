@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider } from 'antd';
+import { ConfigProvider, theme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AppLayout from './components/Layout';
@@ -11,25 +11,8 @@ import Admin from './pages/Admin';
 import UserManagement from './pages/UserManagement';
 
 const FONT_SANS =
-  "'PingFang SC', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Noto Sans SC', " +
-  "'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif";
-
-/* 设计令牌与 index.css 中 :root 保持一致 */
-const T = {
-  paper0: '#f6f2e9',
-  paper1: '#fbf8f1',
-  paper2: '#ffffff',
-  ink1: '#1c1b17',
-  ink2: '#55504a',
-  ink3: '#746d61',
-  rule: '#e4ddce',
-  rule2: '#d3c9b7',
-  accent: '#a63d2f',
-  accentWash: '#f5e5de',
-  ok: '#41694f',
-  warn: '#a87616',
-  danger: '#a33128',
-};
+  "'Inter', 'SF Pro Display', 'PingFang SC', 'HarmonyOS Sans SC', 'Source Han Sans SC', " +
+  "'Noto Sans SC', 'Microsoft YaHei UI', system-ui, -apple-system, sans-serif";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -47,127 +30,133 @@ function App() {
     <ConfigProvider
       locale={zhCN}
       theme={{
+        algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: T.accent,
-          colorInfo: T.accent,
-          colorSuccess: T.ok,
-          colorWarning: T.warn,
-          colorError: T.danger,
-          colorText: T.ink1,
-          colorTextSecondary: T.ink2,
-          colorTextTertiary: T.ink3,
-          colorTextQuaternary: '#9b9487',
-          colorBgBase: T.paper2,
-          colorBgContainer: T.paper2,
-          colorBgElevated: T.paper2,
-          colorBgLayout: T.paper0,
-          colorBorder: T.rule,
-          colorBorderSecondary: '#eee8db',
-          colorFillAlter: '#faf6ee',
-          borderRadius: 8,
-          borderRadiusLG: 12,
-          borderRadiusSM: 4,
+          colorPrimary: '#e4b863',
+          colorPrimaryHover: '#ecc57a',
+          colorInfo: '#7c9cc4',
+          colorSuccess: '#34d399',
+          colorWarning: '#fbbf24',
+          colorError: '#f87171',
+          colorText: '#ffffff',
+          colorTextSecondary: '#7c9cc4',
+          colorTextTertiary: 'rgba(124, 156, 196, 0.72)',
+          colorTextQuaternary: 'rgba(124, 156, 196, 0.45)',
+          colorBgBase: '#0b1322',
+          colorBgContainer: 'rgba(255, 255, 255, 0.05)',
+          colorBgElevated: 'rgba(11, 19, 34, 0.92)',
+          colorBgLayout: 'transparent',
+          colorBorder: 'rgba(255, 255, 255, 0.15)',
+          colorBorderSecondary: 'rgba(255, 255, 255, 0.08)',
+          colorFillAlter: 'rgba(255, 255, 255, 0.04)',
+          borderRadius: 16,
+          borderRadiusLG: 24,
+          borderRadiusSM: 12,
           fontFamily: FONT_SANS,
           fontSize: 14,
-          controlHeight: 36,
+          controlHeight: 38,
           lineWidth: 1,
           wireframe: false,
-          boxShadow: '0 1px 2px rgba(28,27,23,0.05), 0 10px 24px -14px rgba(28,27,23,0.18)',
-          boxShadowSecondary: '0 2px 4px rgba(28,27,23,0.06), 0 18px 40px -20px rgba(28,27,23,0.22)',
         },
         components: {
           Layout: {
-            bodyBg: T.paper0,
+            bodyBg: 'transparent',
             headerBg: 'transparent',
-            siderBg: T.paper1,
-            triggerBg: T.paper1,
-          },
-          Menu: {
-            itemBg: 'transparent',
-            subMenuItemBg: 'transparent',
-            itemColor: T.ink2,
-            itemHoverColor: T.ink1,
-            itemHoverBg: '#f1ebdd',
-            itemSelectedBg: T.paper2,
-            itemSelectedColor: T.ink1,
-            itemActiveBg: T.paper2,
-            itemBorderRadius: 8,
-            itemHeight: 40,
-            itemMarginInline: 8,
-            itemMarginBlock: 2,
-            iconSize: 15,
-            collapsedIconSize: 16,
-          },
-          Card: {
-            colorBgContainer: T.paper2,
-            paddingLG: 20,
-            headerBg: 'transparent',
-            headerFontSize: 14,
+            siderBg: 'transparent',
           },
           Table: {
-            headerBg: '#faf6ee',
-            headerColor: T.ink2,
+            headerBg: 'rgba(255, 255, 255, 0.05)',
+            headerColor: '#7c9cc4',
             headerSplitColor: 'transparent',
-            borderColor: '#eee8db',
-            rowHoverBg: '#faf6ee',
+            borderColor: 'rgba(255, 255, 255, 0.08)',
+            rowHoverBg: 'rgba(255, 255, 255, 0.06)',
             cellPaddingBlock: 12,
-            headerBorderRadius: 8,
+            headerBorderRadius: 16,
           },
           Input: {
-            activeBorderColor: T.accent,
-            hoverBorderColor: T.rule2,
-            activeShadow: '0 0 0 3px rgba(166,61,47,0.12)',
-            paddingBlock: 6,
+            activeBorderColor: 'rgba(255, 255, 255, 0.40)',
+            hoverBorderColor: 'rgba(255, 255, 255, 0.28)',
+            activeShadow: '0 0 0 3px rgba(255, 255, 255, 0.08)',
+            borderRadius: 14,
+          },
+          Select: {
+            activeBorderColor: 'rgba(255, 255, 255, 0.40)',
+            hoverBorderColor: 'rgba(255, 255, 255, 0.28)',
+            borderRadius: 14,
           },
           Button: {
             defaultShadow: 'none',
             primaryShadow: 'none',
             dangerShadow: 'none',
             fontWeight: 500,
+            borderRadius: 16,
           },
           Tabs: {
-            inkBarColor: T.accent,
-            itemSelectedColor: T.ink1,
-            itemColor: T.ink3,
-            itemHoverColor: T.ink1,
+            inkBarColor: '#e4b863',
+            itemSelectedColor: '#ffffff',
+            itemColor: '#7c9cc4',
+            itemHoverColor: '#ffffff',
             titleFontSize: 14,
           },
-          Tag: {
-            defaultBg: '#f6f1e6',
-            defaultColor: T.ink2,
-          },
           Modal: {
-            contentBg: T.paper2,
-            headerBg: T.paper2,
+            contentBg: 'rgba(11, 19, 34, 0.88)',
+            headerBg: 'transparent',
+          },
+          Drawer: {
+            colorBgElevated: 'rgba(11, 19, 34, 0.90)',
           },
           Empty: {
-            colorTextDescription: T.ink3,
+            colorTextDescription: '#7c9cc4',
           },
         },
       }}
     >
-      <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route
-              path="/*"
-              element={
-                <ProtectedRoute>
-                  <AppLayout />
-                </ProtectedRoute>
-              }
-            >
-              <Route path="chat" element={<Chat />} />
-              <Route path="documents" element={<Documents />} />
-              <Route path="profile" element={<Profile />} />
-              <Route path="admin" element={<AdminRoute><Admin /></AdminRoute>} />
-              <Route path="users" element={<AdminRoute><UserManagement /></AdminRoute>} />
-              <Route path="" element={<Navigate to="/chat" replace />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+      {/* 全局固定夜景柔光斑层（为全站玻璃提供光学折射基底） */}
+      <div className="night-backdrop" aria-hidden>
+        <div className="night-orb night-orb-steel-top" />
+        <div className="night-orb night-orb-champagne" />
+        <div className="night-orb night-orb-steel-bottom" />
+      </div>
+
+      <div className="relative z-10 min-h-screen">
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route
+                path="/*"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route path="chat" element={<Chat />} />
+                <Route path="documents" element={<Documents />} />
+                <Route path="profile" element={<Profile />} />
+                <Route
+                  path="admin"
+                  element={
+                    <AdminRoute>
+                      <Admin />
+                    </AdminRoute>
+                  }
+                />
+                <Route
+                  path="users"
+                  element={
+                    <AdminRoute>
+                      <UserManagement />
+                    </AdminRoute>
+                  }
+                />
+                <Route path="" element={<Navigate to="/chat" replace />} />
+                <Route path="*" element={<Navigate to="/chat" replace />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
+      </div>
     </ConfigProvider>
   );
 }

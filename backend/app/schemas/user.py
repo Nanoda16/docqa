@@ -5,12 +5,12 @@ from pydantic import BaseModel, Field
 
 
 class UserCreate(BaseModel):
-    """用户注册请求（公开注册始终以 student 角色创建；max_length=72 兼容 bcrypt 上限）"""
+    """用户注册请求（公开注册首用户自动成为 admin，后续始终以 user 角色创建；max_length=72 兼容 bcrypt 上限）"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     password: str = Field(..., min_length=6, max_length=72, description="密码")
     nickname: str | None = Field(None, max_length=50, description="昵称")
     email: str | None = Field(None, max_length=100, description="邮箱")
-    role: str = Field("student", pattern="^(student|teacher|admin)$", description="角色（仅管理员建号生效）")
+    role: str = Field("user", pattern="^(user|editor|admin)$", description="角色（仅管理员建号生效）")
 
 
 class UserLogin(BaseModel):
@@ -24,6 +24,11 @@ class UserUpdate(BaseModel):
     nickname: str | None = None
     email: str | None = None
     avatar: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    """管理员重置用户密码请求"""
+    new_password: str = Field(..., min_length=6, max_length=72, description="新密码")
 
 
 class UserResponse(BaseModel):

@@ -79,10 +79,12 @@ def chunk_docs(
 
     for doc in docs:
         content = doc.get("content", "")
-        if not content:
+        if not content or not str(content).strip():
             continue
 
-        raw_chunks = splitter.split_text(content)
+        raw_chunks = splitter.split_text(str(content))
+        if not raw_chunks and str(content).strip():
+            raw_chunks = [str(content).strip()]
 
         for i, chunk_text in enumerate(raw_chunks):
             all_chunks.append(

@@ -1,4 +1,4 @@
-"""RAG 问答服务 — ai_service HTTP 客户端"""
+"""RAG 问答与索引同步服务 — ai_service HTTP 客户端"""
 
 import httpx
 
@@ -52,7 +52,7 @@ class RAGService:
 
     @staticmethod
     async def reindex() -> dict:
-        """触发 ai_service 全量重新索引"""
+        """触发 ai_service 全量重新索引（旧兼容入口）"""
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
                 f"{RAGService._base_url()}/reindex",
@@ -85,8 +85,47 @@ class RAGService:
             return resp.json()
 
     @staticmethod
+    def get_index_state(timeout: float = 5.0) -> dict:
+        """获取 ai_service 当前向量索引状态（doc_ids / doc_count / chunk_count / ready）。"""
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.get(
+                f"{RAGService._base_url()}/index/state",
+                headers=_internal_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    @staticmethod
+    def sync_index(
+        upsert: list[dict],
+        delete_doc_ids: list[str],
+        timeout: float = 600.0,
+    ) -> dict:
+        """调用 ai_service POST /index/sync 执行增量索引同步。"""
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(
+                f"{RAGService._base_url()}/index/sync",
+                json={"upsert": upsert, "delete_doc_ids": delete_doc_ids},
+                headers=_internal_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    @staticmethod
+    def rebuild_index(documents: list[dict], timeout: float = 600.0) -> dict:
+        """调用 ai_service POST /index/rebuild 基于数据库文档全量重建索引。"""
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(
+                f"{RAGService._base_url()}/index/rebuild",
+                json={"documents": documents},
+                headers=_internal_headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    @staticmethod
     def rebuild_index_from_directory() -> dict:
-        """让 ai_service 扫描知识目录并全量重建索引（同步调用）。"""
+        """兼容旧方法：调用 ai_service /reindex。"""
         with httpx.Client(timeout=600) as client:
             resp = client.post(
                 f"{RAGService._base_url()}/reindex",
@@ -97,7 +136,7 @@ class RAGService:
 
     @staticmethod
     def delete_doc(doc_id: str, keep_file: bool = False) -> dict:
-        """通知 ai_service 删除索引条目（以及知识目录里的文件）。"""
+        """通知 ai_service 删除索引条目。"""
         with httpx.Client(timeout=30) as client:
             resp = client.delete(
                 f"{RAGService._base_url()}/document/{doc_id}",

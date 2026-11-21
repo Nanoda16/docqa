@@ -4,65 +4,66 @@ export default {
   theme: {
     extend: {
       colors: {
-        paper: {
-          0: '#f6f2e9',
-          1: '#fbf8f1',
-          2: '#ffffff',
+        night: {
+          deep: '#060a13',
+          DEFAULT: '#0b1322',
+          steel: '#16233a',
         },
-        ink: {
-          1: '#1c1b17',
-          2: '#55504a',
-          3: '#746d61',
+        moon: {
+          steel: '#33517a',
+          light: '#7c9cc4',
         },
-        rule: {
-          DEFAULT: '#e4ddce',
-          strong: '#d3c9b7',
+        champagne: {
+          DEFAULT: '#e4b863',
         },
-        accent: {
-          DEFAULT: '#a63d2f',
-          strong: '#8a3025',
-          wash: '#f5e5de',
+        glass: {
+          tile: 'rgba(255, 255, 255, 0.05)',
+          DEFAULT: 'rgba(255, 255, 255, 0.08)',
+          raised: 'rgba(255, 255, 255, 0.14)',
+          border: 'rgba(255, 255, 255, 0.15)',
         },
-        ok: { DEFAULT: '#41694f', wash: '#e6efe8' },
-        warn: { DEFAULT: '#a87616', wash: '#f7efdd' },
-        danger: { DEFAULT: '#a33128' },
+        ok: {
+          DEFAULT: '#34d399',
+        },
+        warn: {
+          DEFAULT: '#fbbf24',
+        },
+        danger: {
+          DEFAULT: '#f87171',
+        },
       },
       fontFamily: {
         sans: [
+          'Inter',
+          'SF Pro Display',
           'PingFang SC',
           'HarmonyOS Sans SC',
           'Source Han Sans SC',
           'Noto Sans SC',
           'Microsoft YaHei UI',
-          'Microsoft YaHei',
           'system-ui',
           '-apple-system',
-          'Segoe UI',
           'sans-serif',
         ],
         mono: [
+          'JetBrains Mono',
           'Cascadia Mono',
           'SF Mono',
-          'JetBrains Mono',
           'Consolas',
           'ui-monospace',
           'monospace',
         ],
       },
-      boxShadow: {
-        r1: '0 1px 2px rgba(28,27,23,0.05), 0 1px 1px rgba(28,27,23,0.03)',
-        r2: '0 1px 2px rgba(28,27,23,0.05), 0 10px 24px -14px rgba(28,27,23,0.18)',
-        r3: '0 2px 4px rgba(28,27,23,0.06), 0 18px 40px -20px rgba(28,27,23,0.22)',
-      },
       borderRadius: {
-        r1: '4px',
-        r2: '8px',
-        r3: '12px',
+        input: '14px',
+        btn: '16px',
+        card: '24px',
+        panel: '32px',
       },
       transitionTimingFunction: {
-        quiet: 'cubic-bezier(0.2, 0, 0, 1)',
+        liquid: 'cubic-bezier(0.16, 1, 0.3, 1)',
       },
     },
   },
   plugins: [],
-}
+};

@@ -22,6 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from engine.pipeline import RAGPipeline
 
@@ -51,10 +52,14 @@ _CORS_ORIGINS = [
 ]
 
 
-def _verify_internal_token(x_internal_token: str | None = Header(None)) -> None:
+def verify_internal_token(x_internal_token: str | None = Header(None)) -> None:
     """若设置了 INTERNAL_API_TOKEN，则强制校验内部调用方凭证。"""
-    if _INTERNAL_TOKEN and x_internal_token != _INTERNAL_TOKEN:
+    expected = os.environ.get("INTERNAL_API_TOKEN", _INTERNAL_TOKEN).strip()
+    if expected and x_internal_token != expected:
         raise HTTPException(status_code=403, detail="Forbidden: invalid internal token")
+
+
+_verify_internal_token = verify_internal_token
 
 
 def _allowed_process_roots() -> list[Path]:
@@ -169,6 +174,48 @@ class ProcessResponse(BaseModel):
     source_url: str = ""
     file_path: str = ""
     persisted_path: str | None = None
+
+
+class IndexDocumentItem(BaseModel):
+    doc_id: str
+    title: str = ""
+    content: str = ""
+    category: str = ""
+    source_url: str = ""
+
+
+class IndexSyncRequest(BaseModel):
+    upsert: list[IndexDocumentItem] = Field(default_factory=list)
+    delete_doc_ids: list[str] = Field(default_factory=list)
+
+
+class IndexRebuildRequest(BaseModel):
+    documents: list[IndexDocumentItem] = Field(default_factory=list)
+
+
+class IndexStateResponse(BaseModel):
+    doc_ids: list[str]
+    doc_count: int
+    chunk_count: int
+    ready: bool
+
+
+class IndexSyncItemSuccess(BaseModel):
+    doc_id: str
+    chunk_count: int
+
+
+class IndexSyncItemFailed(BaseModel):
+    doc_id: str
+    error: str
+
+
+class IndexSyncResponse(BaseModel):
+    upserted: list[IndexSyncItemSuccess]
+    failed: list[IndexSyncItemFailed]
+    deleted_count: int
+    total_docs: int
+    total_chunks: int
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +362,64 @@ def delete_document(doc_id: str, delete_file: bool = True) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Index state / incremental sync / full rebuild
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/index/state",
+    response_model=IndexStateResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
+async def index_state() -> dict[str, Any]:
+    """返回当前索引中的全部 doc_id、文档数、切片数及就绪状态。"""
+    try:
+        return await run_in_threadpool(pipeline.get_index_state)
+    except Exception:
+        logger.exception("Get index state failed")
+        raise HTTPException(status_code=500, detail="获取索引状态失败，请检查服务端日志")
+
+
+@app.post(
+    "/index/sync",
+    response_model=IndexSyncResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
+async def index_sync(body: IndexSyncRequest) -> dict[str, Any]:
+    """增量同步索引：批量删除旧切片并合并向量化待新增/更新文档。"""
+    try:
+        upsert_docs = [item.model_dump() for item in body.upsert]
+        return await run_in_threadpool(
+            pipeline.sync_index,
+            upsert=upsert_docs,
+            delete_doc_ids=body.delete_doc_ids,
+        )
+    except Exception:
+        logger.exception("Incremental index sync failed")
+        raise HTTPException(status_code=500, detail="增量同步索引失败，请检查服务端日志")
+
+
+@app.post(
+    "/index/rebuild",
+    response_model=IndexSyncResponse,
+    dependencies=[Depends(verify_internal_token)],
+)
+async def index_rebuild(body: IndexRebuildRequest) -> dict[str, Any]:
+    """基于权威文档列表全量重建 FAISS 与 BM25 索引。"""
+    try:
+        docs = [item.model_dump() for item in body.documents]
+        return await run_in_threadpool(pipeline.rebuild_index, documents=docs)
+    except Exception:
+        logger.exception("Full index rebuild failed")
+        raise HTTPException(status_code=500, detail="全量重建索引失败，请检查服务端日志")
+
+
+# ---------------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------------
 
 
-@app.get("/stats", dependencies=[Depends(_verify_internal_token)])
+@app.get("/stats", dependencies=[Depends(verify_internal_token)])
 def stats() -> dict[str, Any]:
     try:
         return pipeline.get_stats()

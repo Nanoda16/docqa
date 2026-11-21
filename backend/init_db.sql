@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS sys_user (
     password_hash   VARCHAR(255)    NOT NULL                 COMMENT '密码哈希(BCrypt)',
     nickname        VARCHAR(50)     DEFAULT NULL             COMMENT '昵称',
     email           VARCHAR(100)    DEFAULT NULL             COMMENT '邮箱',
-    role            VARCHAR(20)     DEFAULT 'student'        COMMENT '角色: student/teacher/admin',
+    role            VARCHAR(20)     NOT NULL DEFAULT 'user'  COMMENT '角色: user/editor/admin',
     avatar          VARCHAR(255)    DEFAULT NULL             COMMENT '头像URL',
     status          TINYINT         DEFAULT 1                COMMENT '状态: 1=启用, 0=禁用/软删除',
     created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -39,12 +39,16 @@ CREATE TABLE IF NOT EXISTS kb_document (
     category        VARCHAR(50)     DEFAULT NULL             COMMENT '分类: policy/guide/tech/faq等',
     department      VARCHAR(100)    DEFAULT NULL             COMMENT '所属部门',
     file_type       VARCHAR(20)     DEFAULT NULL             COMMENT '文件类型: pdf/docx/txt/md',
-    file_path       VARCHAR(500)    DEFAULT NULL             COMMENT '知识目录内的文件路径(唯一真相)',
-    vector_doc_id   VARCHAR(64)     DEFAULT NULL             COMMENT '向量索引内的文档ID(文件路径的md5)',
+    file_path       VARCHAR(500)    DEFAULT NULL             COMMENT '原始文件路径（保留兼容字段）',
+    vector_doc_id   VARCHAR(64)     DEFAULT NULL             COMMENT '向量索引内的文档ID（格式: doc_{id}）',
+    content_hash    VARCHAR(64)     DEFAULT NULL             COMMENT '当前内容SHA-256哈希',
+    indexed_hash    VARCHAR(64)     DEFAULT NULL             COMMENT '已同步内容SHA-256哈希',
     source_url      VARCHAR(500)    DEFAULT NULL             COMMENT '来源URL',
     tags            JSON            DEFAULT NULL             COMMENT '标签数组',
     chunk_count     INT             DEFAULT 0                COMMENT '切片数量',
-    status          TINYINT         DEFAULT 1                COMMENT '文档处理状态: 1=UPLOADED,2=PROCESSING,3=READY,4=FAILED',
+    error_message   VARCHAR(500)    DEFAULT NULL             COMMENT '同步失败时的错误信息',
+    processed_at    DATETIME        DEFAULT NULL             COMMENT '最近同步时间',
+    status          TINYINT         DEFAULT 1                COMMENT '索引同步状态: 1=PENDING,2=OUTDATED,3=SYNCED,4=FAILED',
     created_by      BIGINT          DEFAULT NULL             COMMENT '上传用户ID',
     created_at      DATETIME        DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at      DATETIME        DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -76,16 +80,3 @@ CREATE TABLE IF NOT EXISTS qa_record (
     KEY idx_created_at (created_at),
     CONSTRAINT fk_qa_user FOREIGN KEY (user_id) REFERENCES sys_user(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='问答记录表';
-
--- ============================================================
--- 4. 文档状态机迁移（新增字段，不破坏现有数据）
--- ============================================================
--- status 列已存在（TINYINT DEFAULT 1），含义变更为文档处理状态
--- chunk_count 列已存在，保持不动
---
--- 新增字段：
---   error_message  — 处理失败时的详细错误信息
---   processed_at   — 处理完成时间（READY/FAILED 时设置）
-ALTER TABLE kb_document
-    ADD COLUMN error_message VARCHAR(500) DEFAULT NULL COMMENT '处理失败时的错误信息' AFTER chunk_count,
-    ADD COLUMN processed_at   DATETIME     DEFAULT NULL COMMENT '处理完成时间' AFTER error_message;
