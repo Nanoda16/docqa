@@ -10,7 +10,7 @@ interface MarkdownRendererProps {
 const CITATION_REGEX = /(\[S\d+\])/g;
 
 /**
- * 递归替换纯文本子节点中的 `[S1]` 等引用标号为可点击的高亮角标。
+ * 递归替换纯文本子节点中的 `[S1]` 等引用标号为可点击角标。
  */
 function renderWithCitations(
   children: React.ReactNode,
@@ -28,7 +28,7 @@ function renderWithCitations(
           <button
             key={idx}
             type="button"
-            className="citation-badge"
+            className="citation-badge num"
             title={`查看参考来源 ${sourceIndex}`}
             onClick={() => onCitationClick?.(sourceIndex)}
           >
@@ -69,6 +69,16 @@ export default function MarkdownRenderer({ content, onCitationClick }: MarkdownR
             <strong>{renderWithCitations(children, onCitationClick)}</strong>
           ),
           em: ({ children }) => <em>{renderWithCitations(children, onCitationClick)}</em>,
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          ),
+          table: ({ children }) => (
+            <div className="overflow-x-auto max-w-full my-3">
+              <table>{children}</table>
+            </div>
+          ),
         }}
       >
         {content}

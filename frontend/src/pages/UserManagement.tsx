@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Table,
-  Tag,
   Select,
   Button,
   Modal,
@@ -18,6 +18,7 @@ import {
   DeleteOutlined,
   SearchOutlined,
   KeyOutlined,
+  ArrowLeftOutlined,
 } from '@ant-design/icons';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -30,6 +31,7 @@ const ROLE_OPTIONS = [
 ];
 
 export default function UserManagement() {
+  const navigate = useNavigate();
   const { user: currentUser } = useAuth();
 
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -205,54 +207,92 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-5 min-w-0">
-      {/* 玻璃面板 1：筛选工具栏 */}
-      <div className="glass-panel p-4 flex flex-wrap items-center gap-2.5">
-        <Input
-          placeholder="搜索用户名 / 昵称 / 邮箱"
-          value={keywordInput}
-          onChange={(e) => setKeywordInput(e.target.value)}
-          onPressEnter={() =>
-            setQuery((prev) => ({ ...prev, keyword: keywordInput.trim(), page: 1 }))
-          }
-          prefix={<SearchOutlined className="text-moon-light" />}
-          style={{ width: 250 }}
-          allowClear
-        />
-        <Select
-          placeholder="全部角色"
-          value={query.role}
-          onChange={(v) => setQuery((prev) => ({ ...prev, role: v, page: 1 }))}
-          allowClear
-          style={{ width: 130 }}
-          options={ROLE_OPTIONS}
-        />
-        <Select
-          placeholder="全部状态"
-          value={query.status}
-          onChange={(v) => setQuery((prev) => ({ ...prev, status: v, page: 1 }))}
-          allowClear
-          style={{ width: 130 }}
-          options={[
-            { label: '正常', value: 1 },
-            { label: '已禁用', value: 0 },
-          ]}
-        />
-        <div className="flex-1" />
-        <Button icon={<PlusOutlined />} onClick={openCreate} className="btn-champagne !px-5">
+      {/* 顶部控制台二级导航栏 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            className="apple-btn-secondary"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/console')}
+          >
+            控制台
+          </Button>
+
+          <div
+            role="tablist"
+            aria-label="控制台子模块"
+            className="inline-flex items-center p-1 rounded-full bg-[var(--surface)] border border-[var(--border)]"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              onClick={() => navigate('/console/cache')}
+              className="px-3.5 py-1 text-[13px] font-medium rounded-full text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors cursor-pointer"
+            >
+              缓存监控
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="true"
+              onClick={() => navigate('/console/users')}
+              className="px-3.5 py-1 text-[13px] font-medium rounded-full bg-[var(--accent)] text-[var(--accent-ink)] cursor-pointer"
+            >
+              人员管理
+            </button>
+          </div>
+        </div>
+
+        <Button
+          icon={<PlusOutlined />}
+          onClick={openCreate}
+          className="apple-btn-primary !px-5"
+        >
           新增用户
         </Button>
       </div>
 
-      {/* 玻璃面板 2：用户表格（不做 overflow-hidden 吞滚动条） */}
-      <div className="glass-panel min-w-0">
-        <div className="px-5 py-3 flex items-center justify-between border-b border-white/[0.08] bg-white/[0.03] text-[12.5px]">
-          <span className="text-moon-light">
-            共 <strong className="num text-white">{total}</strong> 个成员账号
+      {/* 主卡片：筛选工具栏 + 成员表格 */}
+      <div className="apple-card min-w-0">
+        <div className="p-4 border-b border-[var(--border)] flex flex-wrap items-center gap-2.5">
+          <Input
+            placeholder="搜索用户名 / 昵称 / 邮箱"
+            value={keywordInput}
+            onChange={(e) => setKeywordInput(e.target.value)}
+            onPressEnter={() =>
+              setQuery((prev) => ({ ...prev, keyword: keywordInput.trim(), page: 1 }))
+            }
+            prefix={<SearchOutlined className="text-[var(--ink-3)]" />}
+            className="w-full sm:w-[240px]"
+            allowClear
+          />
+          <Select
+            placeholder="全部角色"
+            value={query.role}
+            onChange={(v) => setQuery((prev) => ({ ...prev, role: v, page: 1 }))}
+            allowClear
+            className="w-[128px]"
+            options={ROLE_OPTIONS}
+          />
+          <Select
+            placeholder="全部状态"
+            value={query.status}
+            onChange={(v) => setQuery((prev) => ({ ...prev, status: v, page: 1 }))}
+            allowClear
+            className="w-[124px]"
+            options={[
+              { label: '正常', value: 1 },
+              { label: '已禁用', value: 0 },
+            ]}
+          />
+          <div className="flex-1 hidden sm:block" />
+          <span className="text-[12.5px] text-[var(--ink-3)]">
+            共 <strong className="num text-[var(--ink)]">{total}</strong> 个成员账号
           </span>
-          <span className="text-moon-light/80">点击状态标签可快捷切换启用 / 禁用</span>
         </div>
 
-        <div className="glass-table min-w-0">
+        <div className="apple-table min-w-0">
           <Table<UserProfile>
             rowKey="id"
             dataSource={users}
@@ -264,7 +304,7 @@ export default function UserManagement() {
               total,
               showSizeChanger: true,
               pageSizeOptions: ['10', '20', '50', '100'],
-              showTotal: (t) => <span className="text-moon-light">共 {t} 条</span>,
+              showTotal: (t) => <span className="num text-[var(--ink-2)]">共 {t} 条</span>,
               onChange: (p, ps) =>
                 setQuery((prev) => ({
                   ...prev,
@@ -277,26 +317,19 @@ export default function UserManagement() {
                 title: 'ID',
                 dataIndex: 'id',
                 width: 64,
-                render: (v: number) => <span className="num text-moon-light">{v}</span>,
+                render: (v: number) => <span className="num text-[var(--ink-3)]">{v}</span>,
               },
               {
                 title: '用户名',
                 dataIndex: 'username',
-                width: 150,
+                width: 165,
                 render: (v: string, r: UserProfile) => (
                   <div className="flex items-center gap-2">
-                    <span className="num font-medium text-white">{v}</span>
+                    <span className="num font-medium text-[var(--ink)]">{v}</span>
                     {r.id === currentUser?.id && (
-                      <Tag
-                        className="!m-0 !text-[11px]"
-                        style={{
-                          color: '#e4b863',
-                          backgroundColor: 'rgba(228, 184, 99, 0.14)',
-                          borderColor: 'rgba(228, 184, 99, 0.35)',
-                        }}
-                      >
+                      <span className="px-2 py-0.5 text-[11px] font-medium rounded-full bg-[var(--accent)] text-[var(--accent-ink)] whitespace-nowrap">
                         当前账号
-                      </Tag>
+                      </span>
                     )}
                   </div>
                 ),
@@ -305,7 +338,12 @@ export default function UserManagement() {
                 title: '昵称',
                 dataIndex: 'nickname',
                 width: 120,
-                render: (v: string | null) => v || <span className="text-moon-light/50">-</span>,
+                render: (v: string | null) =>
+                  v ? (
+                    <span className="text-[var(--ink)]">{v}</span>
+                  ) : (
+                    <span className="text-[var(--ink-3)]">-</span>
+                  ),
               },
               {
                 title: '邮箱',
@@ -313,9 +351,9 @@ export default function UserManagement() {
                 ellipsis: { showTitle: true },
                 render: (v: string | null) =>
                   v ? (
-                    <span className="block text-[13px] text-white/80 truncate">{v}</span>
+                    <span className="block text-[13px] text-[var(--ink-2)] truncate">{v}</span>
                   ) : (
-                    <span className="text-moon-light/50">-</span>
+                    <span className="text-[var(--ink-3)]">-</span>
                   ),
               },
               {
@@ -348,46 +386,42 @@ export default function UserManagement() {
                 render: (s: number, r: UserProfile) => {
                   const isSelf = r.id === currentUser?.id;
                   if (s === 1) {
-                    return isSelf ? (
-                      <Tooltip title="不能禁用当前登录账号">
-                        <Tag
-                          className="!m-0"
-                          style={{
-                            background: 'rgba(52, 211, 153, 0.12)',
-                            color: '#34d399',
-                            borderColor: 'rgba(52, 211, 153, 0.32)',
-                            cursor: 'not-allowed',
-                          }}
-                        >
-                          正常
-                        </Tag>
-                      </Tooltip>
-                    ) : (
-                      <Tag
-                        className="!m-0 cursor-pointer"
+                    const activePill = (
+                      <button
+                        type="button"
+                        disabled={isSelf}
+                        onClick={() => !isSelf && toggleStatus(r.id, 0)}
+                        className={`inline-flex items-center px-2.5 py-0.5 text-[12px] font-medium rounded-full border border-[var(--border)] whitespace-nowrap ${
+                          isSelf ? 'cursor-not-allowed opacity-80' : 'cursor-pointer hover:opacity-85'
+                        }`}
                         style={{
-                          background: 'rgba(52, 211, 153, 0.12)',
-                          color: '#34d399',
-                          borderColor: 'rgba(52, 211, 153, 0.32)',
+                          color: 'var(--status-ok)',
+                          backgroundColor: 'var(--status-ok-bg)',
                         }}
-                        onClick={() => toggleStatus(r.id, 0)}
                       >
                         正常
-                      </Tag>
+                      </button>
+                    );
+                    return isSelf ? (
+                      <Tooltip title="不能禁用当前登录账号">{activePill}</Tooltip>
+                    ) : (
+                      <Tooltip title="点击禁用账号">{activePill}</Tooltip>
                     );
                   }
                   return (
-                    <Tag
-                      className="!m-0 cursor-pointer"
-                      style={{
-                        background: 'rgba(248, 113, 113, 0.12)',
-                        color: '#f87171',
-                        borderColor: 'rgba(248, 113, 113, 0.35)',
-                      }}
-                      onClick={() => toggleStatus(r.id, 1)}
-                    >
-                      已禁用
-                    </Tag>
+                    <Tooltip title="点击启用账号">
+                      <button
+                        type="button"
+                        onClick={() => toggleStatus(r.id, 1)}
+                        className="inline-flex items-center px-2.5 py-0.5 text-[12px] font-medium rounded-full border border-[var(--border)] whitespace-nowrap cursor-pointer hover:opacity-85"
+                        style={{
+                          color: 'var(--status-danger)',
+                          backgroundColor: 'var(--status-danger-bg)',
+                        }}
+                      >
+                        已禁用
+                      </button>
+                    </Tooltip>
                   );
                 },
               },
@@ -396,7 +430,7 @@ export default function UserManagement() {
                 dataIndex: 'created_at',
                 width: 155,
                 render: (d: string) => (
-                  <span className="num text-[12px] text-moon-light whitespace-nowrap">
+                  <span className="num text-[12px] text-[var(--ink-3)] whitespace-nowrap">
                     {d ? new Date(d).toLocaleString() : '-'}
                   </span>
                 ),
@@ -404,7 +438,7 @@ export default function UserManagement() {
               {
                 title: '操作',
                 key: 'actions',
-                width: 245,
+                width: 240,
                 fixed: 'right',
                 render: (_: any, r: UserProfile) => {
                   const isSelf = r.id === currentUser?.id;
@@ -472,18 +506,14 @@ export default function UserManagement() {
 
       {/* 新增 / 编辑用户弹窗 */}
       <Modal
-        title={
-          <span className="text-white">
-            {modalType === 'create' ? '新增成员账号' : '编辑成员资料'}
-          </span>
-        }
+        title={modalType === 'create' ? '新增成员账号' : '编辑成员资料'}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={handleSubmit}
         confirmLoading={submitting}
         okText={modalType === 'create' ? '创建账号' : '保存修改'}
-        okButtonProps={{ className: 'btn-champagne !px-5' }}
-        cancelButtonProps={{ className: 'btn-glass' }}
+        okButtonProps={{ className: 'apple-btn-primary !px-5' }}
+        cancelButtonProps={{ className: 'apple-btn-secondary' }}
       >
         <Form form={form} layout="vertical" className="mt-3">
           {modalType === 'create' && (
@@ -523,14 +553,14 @@ export default function UserManagement() {
 
       {/* 重置密码弹窗 */}
       <Modal
-        title={<span className="text-white">重置密码 · {resetTarget?.username || ''}</span>}
+        title={`重置密码 · ${resetTarget?.username || ''}`}
         open={resetModalOpen}
         onCancel={() => setResetModalOpen(false)}
         onOk={handleResetPassword}
         confirmLoading={resetting}
         okText="确认重置"
-        okButtonProps={{ className: 'btn-champagne !px-5' }}
-        cancelButtonProps={{ className: 'btn-glass' }}
+        okButtonProps={{ className: 'apple-btn-primary !px-5' }}
+        cancelButtonProps={{ className: 'apple-btn-secondary' }}
       >
         <Form form={resetForm} layout="vertical" className="mt-3">
           <Form.Item

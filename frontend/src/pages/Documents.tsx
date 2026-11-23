@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Table,
   Button,
   Input,
-  Tag,
   Modal,
   Form,
   Select,
@@ -33,6 +33,8 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   ClearOutlined,
+  InboxOutlined,
+  ArrowRightOutlined,
 } from '@ant-design/icons';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -43,31 +45,27 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 const STATUS_META: Record<
   number,
-  { label: string; color: string; bg: string; border: string }
+  { label: string; colorVar: string; bgVar: string }
 > = {
   1: {
     label: '待索引',
-    color: '#7c9cc4',
-    bg: 'rgba(124, 156, 196, 0.14)',
-    border: 'rgba(124, 156, 196, 0.35)',
+    colorVar: 'var(--ink-2)',
+    bgVar: 'var(--surface)',
   },
   2: {
     label: '待更新',
-    color: '#fbbf24',
-    bg: 'rgba(251, 191, 36, 0.12)',
-    border: 'rgba(251, 191, 36, 0.35)',
+    colorVar: 'var(--status-warn)',
+    bgVar: 'var(--status-warn-bg)',
   },
   3: {
     label: '已同步',
-    color: '#34d399',
-    bg: 'rgba(52, 211, 153, 0.12)',
-    border: 'rgba(52, 211, 153, 0.32)',
+    colorVar: 'var(--status-ok)',
+    bgVar: 'var(--status-ok-bg)',
   },
   4: {
     label: '同步失败',
-    color: '#f87171',
-    bg: 'rgba(248, 113, 113, 0.12)',
-    border: 'rgba(248, 113, 113, 0.35)',
+    colorVar: 'var(--status-danger)',
+    bgVar: 'var(--status-danger-bg)',
   },
 };
 
@@ -91,8 +89,44 @@ function formatCompactTime(iso?: string): string {
   return `${y}/${m}/${day} ${hh}:${mm}`;
 }
 
+function StatusPill({ status, errorMessage }: { status: number; errorMessage?: string | null }) {
+  const meta = STATUS_META[status];
+  if (!meta) {
+    return (
+      <span className="inline-flex items-center px-2.5 py-0.5 text-[12px] font-medium rounded-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink-2)]">
+        {status}
+      </span>
+    );
+  }
+  const pill = (
+    <span
+      className="inline-flex items-center gap-1 px-2.5 py-0.5 text-[12px] font-medium rounded-full border border-[var(--border)] whitespace-nowrap"
+      style={{
+        color: meta.colorVar,
+        backgroundColor: meta.bgVar,
+      }}
+    >
+      {meta.label}
+      {status === 4 && <ExclamationCircleOutlined className="text-[11px]" />}
+    </span>
+  );
+
+  if (status === 4) {
+    return (
+      <Tooltip title={errorMessage || '索引同步失败，请检查文档内容或服务日志'}>
+        <span className="inline-flex cursor-help">{pill}</span>
+      </Tooltip>
+    );
+  }
+  return pill;
+}
+
 export default function Documents() {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const isUploadView = location.pathname.endsWith('/upload');
   const isAdmin = user?.role === 'admin';
   const canManageIndex = user?.role === 'admin' || user?.role === 'editor';
 
@@ -128,10 +162,11 @@ export default function Documents() {
   const [clearScope, setClearScope] = useState<'filtered' | 'all'>('filtered');
   const [clearing, setClearing] = useState(false);
 
-  /* 多文件依次上传 */
+  /* 多文件依次上传与拖拽态 */
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgressText, setUploadProgressText] = useState('');
+  const [dragActive, setDragActive] = useState(false);
 
   /* 新建文档弹窗 */
   const [createOpen, setCreateOpen] = useState(false);
@@ -202,8 +237,10 @@ export default function Documents() {
   }, [query]);
 
   useEffect(() => {
-    loadDocuments();
-  }, [loadDocuments]);
+    if (!isUploadView) {
+      loadDocuments();
+    }
+  }, [isUploadView, loadDocuments]);
 
   useEffect(() => {
     loadSyncStatus();
@@ -214,10 +251,8 @@ export default function Documents() {
     await Promise.all([loadDocuments(), loadSyncStatus(), loadCategories()]);
   }, [loadDocuments, loadSyncStatus, loadCategories]);
 
-  /* ── 文件依次上传 ──────────────────────────────────────────── */
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = Array.from(e.target.files || []);
-    e.target.value = '';
+  /* ── 文件依次上传（支持点击选择与拖拽） ─────────────────────── */
+  const uploadFiles = async (fileList: File[]) => {
     if (fileList.length === 0) return;
 
     const validFiles: File[] = [];
@@ -275,7 +310,7 @@ export default function Documents() {
         setSelectedRowKeys([]);
         if (query.page !== 1) {
           setQuery((prev) => ({ ...prev, page: 1 }));
-        } else {
+        } else if (!isUploadView) {
           await loadDocuments();
         }
         await Promise.all([loadSyncStatus(), loadCategories()]);
@@ -284,6 +319,20 @@ export default function Documents() {
       setUploading(false);
       setUploadProgressText('');
     }
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = Array.from(e.target.files || []);
+    e.target.value = '';
+    await uploadFiles(fileList);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragActive(false);
+    if (uploading) return;
+    const droppedFiles = Array.from(e.dataTransfer.files || []);
+    await uploadFiles(droppedFiles);
   };
 
   /* ── 新建纯文本文档 ────────────────────────────────────────── */
@@ -303,7 +352,7 @@ export default function Documents() {
       setSelectedRowKeys([]);
       if (query.page !== 1) {
         setQuery((prev) => ({ ...prev, page: 1 }));
-      } else {
+      } else if (!isUploadView) {
         await loadDocuments();
       }
       await Promise.all([loadSyncStatus(), loadCategories()]);
@@ -418,7 +467,7 @@ export default function Documents() {
           : {};
       const res: any = await api.post('/document/clear', payload);
       const count = res?.data?.deleted_count ?? 0;
-      message.success(`已清空 ${count} 篇文档，请点击「同步索引」清理对应向量`);
+      message.success(`已清空 ${count} 篇文档，请前往「上传与索引」执行同步清理`);
       setClearModalOpen(false);
       setSelectedRowKeys([]);
       if (query.page !== 1) {
@@ -477,7 +526,7 @@ export default function Documents() {
     }
   };
 
-  /* ── 表格列定义（紧凑列宽 + 弹性标题 + 固定右侧操作列） ───────── */
+  /* ── 表格列定义 ───────────────────────────────────────────── */
   const columns: TableProps<DocumentItem>['columns'] = [
     {
       title: '文档标题',
@@ -487,14 +536,14 @@ export default function Documents() {
         <button
           type="button"
           onClick={() => openDocDrawer(record.id, 'view')}
-          className="inline-flex items-center gap-2 w-full min-w-0 text-left group"
+          className="inline-flex items-center gap-2 w-full min-w-0 text-left group cursor-pointer"
         >
-          <FileTextOutlined className="text-moon-light group-hover:text-champagne shrink-0 transition-colors" />
-          <span className="font-medium text-white group-hover:text-champagne transition-colors truncate">
+          <FileTextOutlined className="text-[var(--ink-3)] group-hover:text-[var(--ink)] shrink-0 transition-colors" />
+          <span className="font-medium text-[var(--ink)] group-hover:underline underline-offset-2 truncate">
             {title}
           </span>
           {record.file_type && (
-            <span className="num shrink-0 px-1.5 py-0.5 text-[10px] rounded-full bg-white/[0.06] text-moon-light border border-white/15">
+            <span className="num shrink-0 px-1.5 py-0.5 text-[10.5px] rounded-full bg-[var(--surface)] text-[var(--ink-2)] border border-[var(--border)]">
               {FILE_TYPE_LABEL[record.file_type.toLowerCase()] || record.file_type.toUpperCase()}
             </span>
           )}
@@ -504,13 +553,15 @@ export default function Documents() {
     {
       title: '分类',
       dataIndex: 'category',
-      width: 100,
+      width: 110,
       ellipsis: true,
       render: (c: string | null) =>
         c ? (
-          <Tag className="!m-0 !bg-white/[0.06] !border-white/15 !text-moon-light">{c}</Tag>
+          <span className="inline-block max-w-full truncate px-2 py-0.5 text-[12px] rounded-full bg-[var(--surface)] border border-[var(--border)] text-[var(--ink-2)]">
+            {c}
+          </span>
         ) : (
-          <span className="text-moon-light/50">-</span>
+          <span className="text-[var(--ink-3)]">-</span>
         ),
     },
     {
@@ -519,53 +570,29 @@ export default function Documents() {
       width: 100,
       ellipsis: true,
       render: (d: string | null) =>
-        d ? <span className="text-white/80">{d}</span> : <span className="text-moon-light/50">-</span>,
+        d ? <span className="text-[var(--ink-2)]">{d}</span> : <span className="text-[var(--ink-3)]">-</span>,
     },
     {
       title: '状态',
       dataIndex: 'status',
-      width: 96,
-      render: (status: number, record: DocumentItem) => {
-        const meta = STATUS_META[status];
-        if (!meta) return <Tag>{status}</Tag>;
-        const tagEl = (
-          <Tag
-            className="!m-0 font-medium"
-            style={{
-              color: meta.color,
-              backgroundColor: meta.bg,
-              borderColor: meta.border,
-            }}
-          >
-            {meta.label}
-          </Tag>
-        );
-        if (status === 4) {
-          return (
-            <Tooltip title={record.error_message || '索引同步失败，请检查文档内容或服务日志'}>
-              <span className="inline-flex items-center gap-1 cursor-help">
-                {tagEl}
-                <ExclamationCircleOutlined className="text-danger text-[12px]" />
-              </span>
-            </Tooltip>
-          );
-        }
-        return tagEl;
-      },
+      width: 102,
+      render: (status: number, record: DocumentItem) => (
+        <StatusPill status={status} errorMessage={record.error_message} />
+      ),
     },
     {
       title: '切片数',
       dataIndex: 'chunk_count',
-      width: 72,
+      width: 76,
       align: 'right',
-      render: (c: number) => <span className="num text-white/80">{c != null ? c : '-'}</span>,
+      render: (c: number) => <span className="num text-[var(--ink-2)]">{c != null ? c : '-'}</span>,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
-      width: 145,
+      width: 142,
       render: (d: string) => (
-        <span className="num text-[12px] text-moon-light whitespace-nowrap">
+        <span className="num text-[12px] text-[var(--ink-3)] whitespace-nowrap">
           {formatCompactTime(d)}
         </span>
       ),
@@ -573,7 +600,7 @@ export default function Documents() {
     {
       title: '操作',
       key: 'actions',
-      width: 224,
+      width: 210,
       fixed: 'right',
       render: (_: any, record: DocumentItem) => (
         <Space size={2} className="whitespace-nowrap">
@@ -625,7 +652,7 @@ export default function Documents() {
         onClick={handleSyncIndex}
         loading={syncing}
         disabled={!canManageIndex || syncing || rebuilding}
-        className="btn-champagne !px-5 !h-10"
+        className="apple-btn-primary !px-5 !h-9"
       >
         {syncing ? '同步中...' : '同步索引'}
       </Button>
@@ -641,7 +668,7 @@ export default function Documents() {
       cancelText="取消"
     >
       <Button
-        className="btn-glass !h-10"
+        className="apple-btn-secondary !h-9"
         icon={<ReloadOutlined />}
         loading={rebuilding}
         disabled={syncing || rebuilding}
@@ -650,7 +677,7 @@ export default function Documents() {
       </Button>
     </Popconfirm>
   ) : (
-    <Button className="btn-glass !h-10" icon={<ReloadOutlined />} disabled>
+    <Button className="apple-btn-secondary !h-9" icon={<ReloadOutlined />} disabled>
       全量重建
     </Button>
   );
@@ -665,22 +692,30 @@ export default function Documents() {
         okType="danger"
         cancelText="取消"
       >
-        <Button
-          danger
-          loading={batchDeleting}
-          icon={<DeleteOutlined />}
-          className="!rounded-btn !border-danger/50 !bg-danger/15 !text-danger hover:!bg-danger/25"
-        >
+        <Button danger loading={batchDeleting} icon={<DeleteOutlined />}>
           批量删除 ({selectedRowKeys.length})
         </Button>
       </Popconfirm>
     ) : (
       <Tooltip title="勾选下方文档后可批量删除">
-        <Button disabled icon={<DeleteOutlined />} className="btn-glass">
+        <Button disabled icon={<DeleteOutlined />} className="apple-btn-secondary">
           批量删除
         </Button>
       </Tooltip>
     );
+
+  const handleTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      navigate(isUploadView ? '/knowledge/list' : '/knowledge/upload');
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      navigate('/knowledge/list');
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      navigate('/knowledge/upload');
+    }
+  };
 
   return (
     <div className="space-y-5 min-w-0">
@@ -694,253 +729,457 @@ export default function Documents() {
         onChange={handleFileSelected}
       />
 
-      {/* 玻璃面板 1：顶部索引同步状态栏 */}
-      <div className="glass-panel p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-2 min-w-0">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              {aiOffline ? (
-                <span className="inline-flex items-center gap-1.5 text-[14px] font-medium text-warn">
-                  <ExclamationCircleOutlined />
-                  检索服务当前离线
-                </span>
-              ) : hasPendingChanges ? (
-                <span className="inline-flex items-center gap-1.5 text-[14px] font-medium text-champagne">
-                  <ClockCircleOutlined />
-                  有 <span className="num">{pendingTotal}</span> 项索引变更待同步
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-[14px] font-medium text-ok">
-                  <CheckCircleOutlined />
-                  知识库索引已同步
+      {/* 顶部标题与二级路由分段控制器 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-4">
+          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[var(--ink)]">
+            知识库
+          </h1>
+
+          <div
+            role="tablist"
+            aria-label="知识库子视图"
+            onKeyDown={handleTabKeyDown}
+            className="inline-flex items-center p-1 rounded-full bg-[var(--surface)] border border-[var(--border)]"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!isUploadView}
+              onClick={() => navigate('/knowledge/list')}
+              className={`px-3.5 py-1 text-[13px] font-medium rounded-full transition-colors cursor-pointer ${
+                !isUploadView
+                  ? 'bg-[var(--accent)] text-[var(--accent-ink)]'
+                  : 'text-[var(--ink-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              文档列表
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isUploadView}
+              onClick={() => navigate('/knowledge/upload')}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1 text-[13px] font-medium rounded-full transition-colors cursor-pointer ${
+                isUploadView
+                  ? 'bg-[var(--accent)] text-[var(--accent-ink)]'
+                  : 'text-[var(--ink-2)] hover:text-[var(--ink)]'
+              }`}
+            >
+              <span>上传与索引</span>
+              {pendingTotal > 0 && (
+                <span
+                  className={`num px-1.5 py-0.2 text-[11px] rounded-full ${
+                    isUploadView
+                      ? 'bg-[var(--accent-ink)]/15 text-[var(--accent-ink)]'
+                      : 'bg-[var(--status-warn-bg)] text-[var(--status-warn)]'
+                  }`}
+                >
+                  {pendingTotal}
                 </span>
               )}
-
-              {syncStatus && syncStatus.failed_docs > 0 && (
-                <Tag
-                  className="!m-0"
-                  style={{
-                    color: '#f87171',
-                    backgroundColor: 'rgba(248, 113, 113, 0.14)',
-                    borderColor: 'rgba(248, 113, 113, 0.35)',
-                  }}
-                >
-                  {syncStatus.failed_docs} 篇同步失败
-                </Tag>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-[13px] text-moon-light">
-              <span>
-                文档总数{' '}
-                <strong className="num text-white font-semibold">
-                  {syncStatus?.total_docs ?? total}
-                </strong>
-              </span>
-              <span>
-                已同步{' '}
-                <strong className="num text-ok font-semibold">
-                  {syncStatus?.synced_docs ?? 0}
-                </strong>
-              </span>
-              <span>
-                待新增/更新{' '}
-                <strong
-                  className={`num font-semibold ${pendingUpsert > 0 ? 'text-champagne' : 'text-white'}`}
-                >
-                  {pendingUpsert}
-                </strong>
-              </span>
-              <span>
-                待清理{' '}
-                <strong
-                  className={`num font-semibold ${pendingDelete > 0 ? 'text-warn' : 'text-white'}`}
-                >
-                  {pendingDelete}
-                </strong>
-              </span>
-              <span>
-                总切片数{' '}
-                <strong className="num text-white font-semibold">
-                  {syncStatus?.indexed_chunks ?? 0}
-                </strong>
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            {canManageIndex ? (
-              syncButton
-            ) : (
-              <Tooltip title="需要管理员或编辑者权限">{syncButton}</Tooltip>
-            )}
-            {canManageIndex ? (
-              rebuildButton
-            ) : (
-              <Tooltip title="需要管理员或编辑者权限">{rebuildButton}</Tooltip>
-            )}
+            </button>
           </div>
         </div>
 
-        {aiOffline && (
-          <Alert
-            type="warning"
-            showIcon
-            className="mt-4 !bg-warn/10 !border-warn/30"
-            message={
-              <span className="text-white/90 text-[13px]">
-                AI 检索服务当前未连接，文档新增、编辑或删除仍可正常保存，待服务恢复后点击「同步索引」即可更新检索库。
-              </span>
-            }
-          />
-        )}
+        <div className="flex items-center gap-2">
+          {!isUploadView ? (
+            <>
+              <Button
+                className="apple-btn-secondary"
+                icon={<PlusOutlined />}
+                onClick={openCreateModal}
+              >
+                新建文档
+              </Button>
+              <Button
+                className="apple-btn-primary"
+                icon={<UploadOutlined />}
+                onClick={() => navigate('/knowledge/upload')}
+              >
+                上传与同步
+              </Button>
+            </>
+          ) : (
+            <Button
+              className="apple-btn-secondary"
+              onClick={() => navigate('/knowledge/list')}
+            >
+              查看文档列表
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* 玻璃面板 2：工具栏 + 表格（不设 overflow-hidden，确保横向滚动条与右侧操作列完整可见） */}
-      <div className="glass-panel min-w-0">
-        {/* 工具栏 */}
-        <div className="p-4 border-b border-white/10 flex flex-wrap items-center gap-2.5">
-          <Input
-            placeholder="搜索文档标题或关键词"
-            value={keywordInput}
-            onChange={(e) => setKeywordInput(e.target.value)}
-            onPressEnter={() =>
-              setQuery((prev) => ({ ...prev, keyword: keywordInput.trim(), page: 1 }))
-            }
-            prefix={<SearchOutlined className="text-moon-light" />}
-            style={{ width: 230 }}
-            allowClear
-          />
-
-          <Select
-            placeholder="全部分类"
-            value={query.category || undefined}
-            onChange={(v) => setQuery((prev) => ({ ...prev, category: v || '', page: 1 }))}
-            allowClear
-            style={{ width: 140 }}
-            options={categories.map((c) => ({ label: c, value: c }))}
-          />
-
-          <Select
-            placeholder="全部状态"
-            value={query.status}
-            onChange={(v) => setQuery((prev) => ({ ...prev, status: v, page: 1 }))}
-            allowClear
-            style={{ width: 130 }}
-            options={[
-              { label: '已同步', value: 3 },
-              { label: '待索引', value: 1 },
-              { label: '待更新', value: 2 },
-              { label: '同步失败', value: 4 },
-            ]}
-          />
-
-          <div className="flex-1" />
-
-          <div className="flex flex-wrap items-center gap-2">
-            {batchDeleteButton}
-
-            {selectedRowKeys.length > 0 && (
+      {/* ===================================================================
+          子视图 A：文档库检索与管理 (/knowledge/list)
+          =================================================================== */}
+      {!isUploadView && (
+        <div className="space-y-4 min-w-0">
+          {/* 仅在存在待同步变更或 AI 离线时，以克制单行条提示跳转 */}
+          {(aiOffline || hasPendingChanges || (syncStatus && syncStatus.failed_docs > 0)) && (
+            <div className="apple-surface px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 text-[13px] min-w-0">
+                {aiOffline ? (
+                  <>
+                    <ExclamationCircleOutlined style={{ color: 'var(--status-warn)' }} />
+                    <span className="text-[var(--ink)]">
+                      检索服务当前离线，文档更改已保存，服务恢复后可前往同步索引。
+                    </span>
+                  </>
+                ) : hasPendingChanges ? (
+                  <>
+                    <ClockCircleOutlined style={{ color: 'var(--status-warn)' }} />
+                    <span className="text-[var(--ink)]">
+                      有 <strong className="num">{pendingTotal}</strong> 项索引变更待同步
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <CloseCircleOutlined style={{ color: 'var(--status-danger)' }} />
+                    <span className="text-[var(--ink)]">
+                      有 <strong className="num">{syncStatus?.failed_docs ?? 0}</strong> 篇文档同步失败
+                    </span>
+                  </>
+                )}
+              </div>
               <Button
                 type="link"
                 size="small"
-                onClick={() => setSelectedRowKeys([])}
-                className="!px-1.5"
+                className="!px-0 !font-medium"
+                onClick={() => navigate('/knowledge/upload')}
               >
-                取消选择
+                前往同步 <ArrowRightOutlined />
               </Button>
-            )}
+            </div>
+          )}
 
-            <Button
-              className="btn-glass"
-              icon={<UploadOutlined />}
-              loading={uploading}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {uploading ? uploadProgressText || '上传中...' : '上传文档'}
-            </Button>
+          {/* 主表格卡片 */}
+          <div className="apple-card min-w-0">
+            {/* 筛选与批量操作栏 */}
+            <div className="p-4 border-b border-[var(--border)] flex flex-wrap items-center gap-2.5">
+              <Input
+                placeholder="搜索文档标题或关键词"
+                value={keywordInput}
+                onChange={(e) => setKeywordInput(e.target.value)}
+                onPressEnter={() =>
+                  setQuery((prev) => ({ ...prev, keyword: keywordInput.trim(), page: 1 }))
+                }
+                prefix={<SearchOutlined className="text-[var(--ink-3)]" />}
+                className="w-full sm:w-[230px]"
+                allowClear
+              />
 
-            <Button className="btn-glass" icon={<PlusOutlined />} onClick={openCreateModal}>
-              新建文档
-            </Button>
+              <Select
+                placeholder="全部分类"
+                value={query.category || undefined}
+                onChange={(v) => setQuery((prev) => ({ ...prev, category: v || '', page: 1 }))}
+                allowClear
+                className="w-[136px]"
+                options={categories.map((c) => ({ label: c, value: c }))}
+              />
 
-            {isAdmin && (
-              <Button
-                danger
-                icon={<ClearOutlined />}
-                onClick={openClearModal}
-                disabled={total === 0 && !hasActiveFilters}
-                className="!rounded-btn !bg-white/[0.04] !border-danger/40 !text-danger hover:!bg-danger/15"
-              >
-                清空文档
-              </Button>
-            )}
+              <Select
+                placeholder="全部状态"
+                value={query.status}
+                onChange={(v) => setQuery((prev) => ({ ...prev, status: v, page: 1 }))}
+                allowClear
+                className="w-[126px]"
+                options={[
+                  { label: '已同步', value: 3 },
+                  { label: '待索引', value: 1 },
+                  { label: '待更新', value: 2 },
+                  { label: '同步失败', value: 4 },
+                ]}
+              />
+
+              <div className="flex-1 hidden sm:block" />
+
+              <div className="flex flex-wrap items-center gap-2">
+                {batchDeleteButton}
+
+                {selectedRowKeys.length > 0 && (
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => setSelectedRowKeys([])}
+                    className="!px-1.5"
+                  >
+                    取消选择
+                  </Button>
+                )}
+
+                {isAdmin && (
+                  <Button
+                    danger
+                    icon={<ClearOutlined />}
+                    onClick={openClearModal}
+                    disabled={total === 0 && !hasActiveFilters}
+                  >
+                    清空文档
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* 精简列表计数条 */}
+            <div className="px-4 py-2.5 flex items-center justify-between border-b border-[var(--border)] text-[12.5px] text-[var(--ink-2)]">
+              <span>
+                共 <strong className="num text-[var(--ink)]">{total}</strong> 篇文档
+              </span>
+              <span className="num text-[var(--ink-3)]">
+                已同步 {syncStatus?.synced_docs ?? 0} / 总切片 {syncStatus?.indexed_chunks ?? 0}
+              </span>
+            </div>
+
+            {/* 表格区 */}
+            <div className="apple-table min-w-0">
+              <Table<DocumentItem>
+                rowKey="id"
+                columns={columns}
+                dataSource={documents}
+                loading={loading}
+                scroll={{ x: 920 }}
+                rowSelection={{
+                  columnWidth: 44,
+                  selectedRowKeys,
+                  onChange: (keys) => setSelectedRowKeys(keys as number[]),
+                }}
+                locale={{
+                  emptyText: (
+                    <div className="py-12 px-4 text-center">
+                      <div className="mx-auto w-11 h-11 rounded-[14px] bg-[var(--surface)] border border-[var(--border)] grid place-items-center text-[var(--ink-2)] text-[18px]">
+                        <FileTextOutlined />
+                      </div>
+                      <p className="mt-3.5 text-[14.5px] text-[var(--ink)] font-medium">
+                        暂无知识库文档
+                      </p>
+                      <p className="mt-1 mx-auto max-w-[380px] text-[12.5px] text-[var(--ink-2)]">
+                        前往「上传与索引」导入文件，或直接新建纯文本文档。
+                      </p>
+                      <div className="mt-4 flex items-center justify-center gap-2">
+                        <Button
+                          className="apple-btn-primary"
+                          icon={<UploadOutlined />}
+                          onClick={() => navigate('/knowledge/upload')}
+                        >
+                          上传文档
+                        </Button>
+                        <Button
+                          className="apple-btn-secondary"
+                          icon={<PlusOutlined />}
+                          onClick={openCreateModal}
+                        >
+                          新建文档
+                        </Button>
+                      </div>
+                    </div>
+                  ),
+                }}
+                pagination={{
+                  current: query.page,
+                  pageSize: query.pageSize,
+                  total,
+                  showSizeChanger: true,
+                  pageSizeOptions: ['10', '20', '50', '100'],
+                  showTotal: (t) => <span className="num text-[var(--ink-2)]">共 {t} 条</span>,
+                  onChange: (p, ps) => {
+                    setQuery((prev) => ({
+                      ...prev,
+                      page: ps !== prev.pageSize ? 1 : p,
+                      pageSize: ps,
+                    }));
+                  },
+                }}
+              />
+            </div>
           </div>
         </div>
+      )}
 
-        {/* 列表统计条 */}
-        <div className="px-4 py-2.5 flex items-center justify-between border-b border-white/[0.08] bg-white/[0.03] text-[12.5px]">
-          <span className="text-moon-light">
-            共 <strong className="num text-white">{total}</strong> 篇文档
-          </span>
-          <span className="text-moon-light/80">支持 PDF、DOCX、TXT、MD 格式</span>
-        </div>
+      {/* ===================================================================
+          子视图 B：上传与索引同步 (/knowledge/upload)
+          =================================================================== */}
+      {isUploadView && (
+        <div className="space-y-5 min-w-0">
+          {/* 模块 1：索引同步状态与操作 */}
+          <div className="apple-card p-6 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {aiOffline ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 text-[14px] font-medium"
+                    style={{ color: 'var(--status-warn)' }}
+                  >
+                    <ExclamationCircleOutlined />
+                    检索服务当前离线
+                  </span>
+                ) : hasPendingChanges ? (
+                  <span
+                    className="inline-flex items-center gap-1.5 text-[14px] font-medium"
+                    style={{ color: 'var(--status-warn)' }}
+                  >
+                    <ClockCircleOutlined />
+                    有 <span className="num">{pendingTotal}</span> 项索引变更待同步
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1.5 text-[14px] font-medium"
+                    style={{ color: 'var(--status-ok)' }}
+                  >
+                    <CheckCircleOutlined />
+                    知识库索引已同步
+                  </span>
+                )}
 
-        {/* 表格区：使用固定最小宽度启用 table-layout: fixed，1280px+ 零横向滚动，窄屏可流畅滑动 */}
-        <div className="glass-table min-w-0">
-          <Table<DocumentItem>
-            rowKey="id"
-            columns={columns}
-            dataSource={documents}
-            loading={loading}
-            scroll={{ x: 980 }}
-            rowSelection={{
-              columnWidth: 44,
-              selectedRowKeys,
-              onChange: (keys) => setSelectedRowKeys(keys as number[]),
-            }}
-            locale={{
-              emptyText: (
-                <div className="py-14 px-4 text-center">
-                  <div className="mx-auto w-12 h-12 rounded-[16px] bg-white/[0.06] border border-white/15 grid place-items-center text-champagne text-[20px]">
-                    <FileTextOutlined />
-                  </div>
-                  <p className="mt-4 text-[14.5px] text-white font-medium">暂无知识库文档</p>
-                  <p className="mt-1.5 mx-auto max-w-[420px] text-[12.5px] text-moon-light leading-relaxed">
-                    可批量上传 PDF、DOCX、TXT、MD 文件或直接新建纯文本文档，保存后点击顶部「同步索引」即可投入问答检索。
-                  </p>
+                {syncStatus && syncStatus.failed_docs > 0 && (
+                  <span
+                    className="num px-2.5 py-0.5 text-[12px] font-medium rounded-full border border-[var(--border)]"
+                    style={{
+                      color: 'var(--status-danger)',
+                      backgroundColor: 'var(--status-danger-bg)',
+                    }}
+                  >
+                    {syncStatus.failed_docs} 篇同步失败
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2.5 shrink-0">
+                {canManageIndex ? (
+                  syncButton
+                ) : (
+                  <Tooltip title="需要管理员或编辑者权限">{syncButton}</Tooltip>
+                )}
+                {canManageIndex ? (
+                  rebuildButton
+                ) : (
+                  <Tooltip title="需要管理员或编辑者权限">{rebuildButton}</Tooltip>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="apple-surface p-4">
+                <div className="text-[12px] text-[var(--ink-3)]">文档总数</div>
+                <div className="mt-2 num text-[26px] font-semibold leading-none text-[var(--ink)]">
+                  {syncStatus?.total_docs ?? total}
                 </div>
-              ),
-            }}
-            pagination={{
-              current: query.page,
-              pageSize: query.pageSize,
-              total,
-              showSizeChanger: true,
-              pageSizeOptions: ['10', '20', '50', '100'],
-              showTotal: (t) => <span className="text-moon-light">共 {t} 条</span>,
-              onChange: (p, ps) => {
-                setQuery((prev) => ({
-                  ...prev,
-                  page: ps !== prev.pageSize ? 1 : p,
-                  pageSize: ps,
-                }));
-              },
-            }}
-          />
+              </div>
+              <div className="apple-surface p-4">
+                <div className="text-[12px] text-[var(--ink-3)]">已同步</div>
+                <div
+                  className="mt-2 num text-[26px] font-semibold leading-none"
+                  style={{ color: 'var(--status-ok)' }}
+                >
+                  {syncStatus?.synced_docs ?? 0}
+                </div>
+              </div>
+              <div className="apple-surface p-4">
+                <div className="text-[12px] text-[var(--ink-3)]">待新增 / 更新</div>
+                <div
+                  className="mt-2 num text-[26px] font-semibold leading-none"
+                  style={{ color: pendingUpsert > 0 ? 'var(--status-warn)' : 'var(--ink)' }}
+                >
+                  {pendingUpsert}
+                </div>
+              </div>
+              <div className="apple-surface p-4">
+                <div className="text-[12px] text-[var(--ink-3)]">待清理</div>
+                <div
+                  className="mt-2 num text-[26px] font-semibold leading-none"
+                  style={{ color: pendingDelete > 0 ? 'var(--status-warn)' : 'var(--ink)' }}
+                >
+                  {pendingDelete}
+                </div>
+              </div>
+              <div className="apple-surface p-4 col-span-2 sm:col-span-1">
+                <div className="text-[12px] text-[var(--ink-3)]">总切片数</div>
+                <div className="mt-2 num text-[26px] font-semibold leading-none text-[var(--ink)]">
+                  {syncStatus?.indexed_chunks ?? 0}
+                </div>
+              </div>
+            </div>
+
+            {aiOffline && (
+              <Alert
+                type="warning"
+                showIcon
+                message="AI 检索服务当前未连接，文档新增、编辑或删除仍可正常保存，待服务恢复后点击「同步索引」即可更新检索库。"
+              />
+            )}
+          </div>
+
+          {/* 模块 2：文档导入与新建双栏区 */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* 批量文件上传拖拽区 */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={handleDrop}
+              className={`apple-card p-6 lg:col-span-2 flex flex-col items-center justify-center text-center border-dashed transition-colors ${
+                dragActive ? '!border-[var(--ink)] bg-[var(--surface)]' : ''
+              }`}
+            >
+              <div className="w-12 h-12 rounded-[14px] bg-[var(--surface)] border border-[var(--border)] grid place-items-center text-[22px] text-[var(--ink)]">
+                <InboxOutlined />
+              </div>
+              <h2 className="mt-4 text-[16px] font-semibold text-[var(--ink)]">
+                上传知识库文件
+              </h2>
+              <p className="mt-1.5 text-[13px] text-[var(--ink-2)] max-w-md">
+                支持拖拽或批量选择 PDF、DOCX、TXT、MD 文件，单文件不超过 50MB。上传后标记为「待索引」，点击上方「同步索引」即可生效。
+              </p>
+              <div className="mt-5">
+                <Button
+                  className="apple-btn-primary !px-6 !h-10"
+                  icon={<UploadOutlined />}
+                  loading={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {uploading ? uploadProgressText || '上传中...' : '选择文件上传'}
+                </Button>
+              </div>
+            </div>
+
+            {/* 新建纯文本文档入口 */}
+            <div className="apple-card p-6 flex flex-col justify-between gap-5">
+              <div>
+                <div className="w-10 h-10 rounded-[12px] bg-[var(--surface)] border border-[var(--border)] grid place-items-center text-[17px] text-[var(--ink)]">
+                  <FileTextOutlined />
+                </div>
+                <h2 className="mt-4 text-[16px] font-semibold text-[var(--ink)]">
+                  新建纯文本文档
+                </h2>
+                <p className="mt-1.5 text-[13px] text-[var(--ink-2)] leading-relaxed">
+                  直接录入 Markdown 或纯文本规章条目，指定分类与部门并保存为待索引文档。
+                </p>
+              </div>
+              <Button
+                className="apple-btn-secondary !h-10 w-full"
+                icon={<PlusOutlined />}
+                onClick={openCreateModal}
+              >
+                编写新文档
+              </Button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 新建纯文本文档弹窗 */}
       <Modal
-        title={<span className="text-white">新建纯文本文档</span>}
+        title="新建纯文本文档"
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={handleCreateSubmit}
         confirmLoading={creating}
         okText="保存为待索引"
-        okButtonProps={{ className: 'btn-champagne !px-5' }}
-        cancelButtonProps={{ className: 'btn-glass' }}
+        okButtonProps={{ className: 'apple-btn-primary !px-5' }}
+        cancelButtonProps={{ className: 'apple-btn-secondary' }}
         width={640}
       >
         <Form form={createForm} layout="vertical" className="mt-3">
@@ -975,8 +1214,8 @@ export default function Documents() {
       {/* 管理员清空文档强确认弹窗 */}
       <Modal
         title={
-          <span className="flex items-center gap-2 text-white">
-            <ExclamationCircleOutlined className="text-danger" />
+          <span className="flex items-center gap-2">
+            <ExclamationCircleOutlined style={{ color: 'var(--status-danger)' }} />
             清空知识库文档
           </span>
         }
@@ -985,43 +1224,43 @@ export default function Documents() {
         onOk={handleClearDocuments}
         confirmLoading={clearing}
         okText="确认清空"
-        okButtonProps={{ danger: true, className: '!rounded-btn' }}
-        cancelButtonProps={{ className: 'btn-glass' }}
+        okButtonProps={{ danger: true }}
+        cancelButtonProps={{ className: 'apple-btn-secondary' }}
       >
         <div className="space-y-4 pt-2">
           <Alert
             type="warning"
             showIcon
-            className="!bg-warn/10 !border-warn/30"
-            message={<span className="text-white">此操作将直接删除数据库中的文档记录，不可恢复</span>}
-            description={
-              <span className="text-moon-light text-[12.5px]">
-                清空后，请点击顶部「同步索引」或「全量重建」以同步清理 AI 检索库中的旧切片。
-              </span>
-            }
+            message="此操作将直接删除数据库中的文档记录，不可恢复"
+            description="清空后，请前往「上传与索引」点击「同步索引」或「全量重建」以清理检索库中的旧切片。"
           />
 
           {hasActiveFilters ? (
             <div className="space-y-2">
-              <div className="text-[13px] text-moon-light">请选择清空范围：</div>
+              <div className="text-[13px] text-[var(--ink-2)]">请选择清空范围：</div>
               <Radio.Group
                 value={clearScope}
                 onChange={(e) => setClearScope(e.target.value)}
                 className="flex flex-col gap-2"
               >
-                <Radio value="filtered" className="!text-white">
-                  仅清空当前筛选匹配的文档（共 <span className="num text-champagne">{total}</span> 篇）
+                <Radio value="filtered">
+                  仅清空当前筛选匹配的文档（共 <span className="num font-semibold">{total}</span> 篇）
                 </Radio>
-                <Radio value="all" className="!text-white">
+                <Radio value="all">
                   清空知识库中的全部文档（共{' '}
-                  <span className="num text-danger">{syncStatus?.total_docs ?? total}</span> 篇）
+                  <span className="num font-semibold" style={{ color: 'var(--status-danger)' }}>
+                    {syncStatus?.total_docs ?? total}
+                  </span>{' '}
+                  篇）
                 </Radio>
               </Radio.Group>
             </div>
           ) : (
-            <p className="text-[13.5px] text-white/90">
+            <p className="text-[13.5px] text-[var(--ink)]">
               即将清空知识库中的全部{' '}
-              <strong className="num text-danger">{syncStatus?.total_docs ?? total}</strong>{' '}
+              <strong className="num" style={{ color: 'var(--status-danger)' }}>
+                {syncStatus?.total_docs ?? total}
+              </strong>{' '}
               篇文档记录，是否确认继续？
             </p>
           )}
@@ -1030,7 +1269,7 @@ export default function Documents() {
 
       {/* 查看 / 编辑抽屉 */}
       <Drawer
-        title={<span className="text-white">{drawerMode === 'edit' ? '编辑文档' : '文档详情'}</span>}
+        title={drawerMode === 'edit' ? '编辑文档' : '文档详情'}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={680}
@@ -1040,7 +1279,7 @@ export default function Documents() {
             <Space>
               {drawerMode === 'view' ? (
                 <Button
-                  className="btn-champagne !px-4"
+                  className="apple-btn-primary !px-4"
                   icon={<EditOutlined />}
                   onClick={() => setDrawerMode('edit')}
                 >
@@ -1048,11 +1287,11 @@ export default function Documents() {
                 </Button>
               ) : (
                 <>
-                  <Button className="btn-glass" onClick={() => setDrawerMode('view')}>
+                  <Button className="apple-btn-secondary" onClick={() => setDrawerMode('view')}>
                     取消
                   </Button>
                   <Button
-                    className="btn-champagne !px-4"
+                    className="apple-btn-primary !px-4"
                     loading={savingEdit}
                     onClick={handleSaveEdit}
                   >
@@ -1067,31 +1306,18 @@ export default function Documents() {
         {activeDoc && drawerMode === 'view' && (
           <div className="space-y-4">
             <div>
-              <h3 className="text-[18px] font-semibold text-white">{activeDoc.title}</h3>
+              <h3 className="text-[18px] font-semibold text-[var(--ink)]">{activeDoc.title}</h3>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                {(() => {
-                  const meta = STATUS_META[activeDoc.status];
-                  return meta ? (
-                    <Tag
-                      style={{
-                        color: meta.color,
-                        backgroundColor: meta.bg,
-                        borderColor: meta.border,
-                      }}
-                    >
-                      {meta.label}
-                    </Tag>
-                  ) : null;
-                })()}
+                <StatusPill status={activeDoc.status} errorMessage={activeDoc.error_message} />
                 {activeDoc.file_type && (
-                  <Tag className="!bg-white/[0.06] !border-white/15 !text-moon-light">
+                  <span className="num px-2.5 py-0.5 text-[12px] rounded-full bg-[var(--surface)] border border-[var(--border)] text-[var(--ink-2)]">
                     {FILE_TYPE_LABEL[activeDoc.file_type.toLowerCase()] || activeDoc.file_type}
-                  </Tag>
+                  </span>
                 )}
                 {activeDoc.category && (
-                  <Tag className="!bg-white/[0.06] !border-white/15 !text-champagne">
+                  <span className="px-2.5 py-0.5 text-[12px] rounded-full bg-[var(--surface)] border border-[var(--border)] text-[var(--ink)]">
                     {activeDoc.category}
-                  </Tag>
+                  </span>
                 )}
               </div>
             </div>
@@ -1101,9 +1327,8 @@ export default function Documents() {
                 type="error"
                 showIcon
                 icon={<CloseCircleOutlined />}
-                className="!bg-danger/10 !border-danger/35"
-                message={<span className="text-white">同步失败原因</span>}
-                description={<span className="text-white/85">{activeDoc.error_message}</span>}
+                message="同步失败原因"
+                description={activeDoc.error_message}
               />
             )}
 
@@ -1119,26 +1344,30 @@ export default function Documents() {
                 },
                 {
                   label: '创建时间',
-                  children: activeDoc.created_at
-                    ? new Date(activeDoc.created_at).toLocaleString()
-                    : '-',
+                  children: (
+                    <span className="num">
+                      {activeDoc.created_at ? new Date(activeDoc.created_at).toLocaleString() : '-'}
+                    </span>
+                  ),
                 },
                 {
                   label: '更新时间',
-                  children: activeDoc.updated_at
-                    ? new Date(activeDoc.updated_at).toLocaleString()
-                    : '-',
+                  children: (
+                    <span className="num">
+                      {activeDoc.updated_at ? new Date(activeDoc.updated_at).toLocaleString() : '-'}
+                    </span>
+                  ),
                 },
               ]}
             />
 
             <div>
-              <div className="text-[13px] font-medium text-moon-light mb-2">文档正文</div>
-              <div className="rounded-[16px] border border-white/12 bg-night-deep/55 p-4 text-[13.5px] leading-[1.75] text-white/90 whitespace-pre-wrap break-words max-h-[55vh] overflow-y-auto">
+              <div className="text-[13px] font-medium text-[var(--ink-2)] mb-2">文档正文</div>
+              <div className="rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-4 text-[13.5px] leading-[1.75] text-[var(--ink)] whitespace-pre-wrap break-words max-h-[55vh] overflow-y-auto">
                 {activeDoc.content?.trim() ? (
                   activeDoc.content
                 ) : (
-                  <span className="text-moon-light">暂无可预览的文本正文</span>
+                  <span className="text-[var(--ink-3)]">暂无可预览的文本正文</span>
                 )}
               </div>
             </div>
@@ -1168,12 +1397,7 @@ export default function Documents() {
             <Alert
               type="info"
               showIcon
-              className="!bg-white/[0.06] !border-white/15"
-              message={
-                <span className="text-moon-light text-[12.5px]">
-                  修改保存后，如文档此前已同步，状态将自动变为「待更新」，需点击「同步索引」生效。
-                </span>
-              }
+              message="修改保存后，如文档此前已同步，状态将自动变为「待更新」，需前往「上传与索引」点击「同步索引」生效。"
             />
           </Form>
         )}

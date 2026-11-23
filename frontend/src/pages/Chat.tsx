@@ -11,16 +11,14 @@ import {
   StopOutlined,
   DownOutlined,
   PaperClipOutlined,
-  BulbOutlined,
   CopyOutlined,
   CheckOutlined,
-  DatabaseOutlined,
   ArrowRightOutlined,
   HistoryOutlined,
-  RobotOutlined,
-  UserOutlined,
   ReloadOutlined,
   ThunderboltOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import api from '../services/api';
 import SourceCards from '../components/SourceCards';
@@ -68,6 +66,7 @@ export default function Chat() {
     index: number;
   } | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -316,7 +315,6 @@ export default function Chat() {
     if (!currentSession) setCurrentSession(sessionId);
 
     const targetIdx = messages.findIndex((m) => m.id === targetMsg.id);
-    // 取该回答之前的对话轮次作为历史上下文（剔除紧邻的同题 user 提问）
     const precedingMsgs =
       targetIdx > 0 ? messages.slice(0, Math.max(0, targetIdx - 1)) : [];
     const priorHistory = buildHistory(precedingMsgs);
@@ -433,10 +431,10 @@ export default function Chat() {
     (syncStatus?.pending_upsert ?? 0) + (syncStatus?.pending_delete ?? 0);
 
   const sessionSidebar = (
-    <div className="flex flex-col h-full">
-      <div className="p-3.5 border-b border-white/10">
+    <div className="flex flex-col h-full bg-[var(--surface-2)]">
+      <div className="p-3 border-b border-[var(--border)]">
         <Button
-          className="btn-glass"
+          className="apple-btn-primary !h-9"
           icon={<PlusOutlined />}
           block
           onClick={createNewSession}
@@ -446,39 +444,51 @@ export default function Chat() {
         </Button>
       </div>
 
-      <div className="px-4 pt-3.5 pb-1.5 flex items-center justify-between text-[12px] text-moon-light font-medium">
+      <div className="px-3.5 pt-3 pb-1.5 flex items-center justify-between text-[11.5px] text-[var(--ink-3)] font-medium">
         <span>历史会话</span>
         <span className="num">{sessions.length}</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2.5 pb-2">
+      <div className="flex-1 overflow-y-auto px-2 pb-2">
         {sessions.length === 0 ? (
           <div className="px-3 py-8 text-center">
-            <p className="text-[12.5px] text-moon-light leading-relaxed">
-              暂无历史会话，发起提问后将自动保存记录。
+            <p className="text-[12.5px] text-[var(--ink-3)] leading-relaxed m-0">
+              暂无历史会话
             </p>
           </div>
         ) : (
-          <ul className="space-y-1">
+          <ul className="space-y-0.5 m-0 p-0 list-none">
             {sessions.map((s) => {
               const active = s.session_id === currentSession;
               return (
                 <li key={s.session_id}>
                   <div
+                    role="button"
+                    tabIndex={0}
                     data-active={active}
-                    className="session-row group flex items-start gap-2 px-3 py-2.5 cursor-pointer"
                     onClick={() => loadSessionMessages(s.session_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        loadSessionMessages(s.session_id);
+                      }
+                    }}
+                    className={`group flex items-start gap-2 px-2.5 py-2 rounded-[var(--radius-sm)] cursor-pointer transition-colors ${
+                      active
+                        ? 'bg-[var(--surface)] text-[var(--ink)]'
+                        : 'text-[var(--ink-2)] hover:bg-[var(--surface-hover)] hover:text-[var(--ink)]'
+                    }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div
                         className={`text-[13px] truncate leading-snug ${
-                          active ? 'text-white font-medium' : 'text-white/80'
+                          active ? 'font-medium text-[var(--ink)]' : ''
                         }`}
                       >
                         {s.last_question || '新对话'}
                       </div>
-                      <div className="num mt-1 text-[11px] text-moon-light truncate">
-                        {s.question_count} 轮对话
+                      <div className="num mt-0.5 text-[11px] text-[var(--ink-3)] truncate">
+                        {s.question_count} 轮
                         {(() => {
                           const d = new Date(s.updated_at);
                           return isNaN(d.getTime())
@@ -506,7 +516,7 @@ export default function Chat() {
                         type="button"
                         aria-label="删除会话"
                         onClick={(e) => e.stopPropagation()}
-                        className="grid place-items-center w-6 h-6 shrink-0 rounded text-moon-light opacity-0 group-hover:opacity-100 hover:text-danger hover:bg-white/10 focus-visible:opacity-100 transition-opacity"
+                        className="grid place-items-center w-6 h-6 shrink-0 rounded-[6px] text-[var(--ink-3)] opacity-0 group-hover:opacity-100 hover:text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)] focus-visible:opacity-100 transition-opacity"
                       >
                         <DeleteOutlined className="text-[11px]" />
                       </button>
@@ -519,15 +529,10 @@ export default function Chat() {
         )}
       </div>
 
-      <div className="border-t border-white/10 px-3.5 py-3.5">
-        <div className="flex items-center gap-1.5 pb-2 text-[12px] font-medium text-moon-light">
-          <BulbOutlined className="text-champagne" />
-          <span>高频提问</span>
-        </div>
-        {hotQuestions.length === 0 ? (
-          <p className="text-[12px] text-moon-light/70">暂无热门提问</p>
-        ) : (
-          <ul className="space-y-1.5">
+      {hotQuestions.length > 0 && (
+        <div className="border-t border-[var(--border)] px-3.5 py-3">
+          <div className="pb-2 text-[11.5px] font-medium text-[var(--ink-3)]">高频提问</div>
+          <ul className="space-y-1.5 m-0 p-0 list-none">
             {hotQuestions.map((q, i) => (
               <li key={i}>
                 <button
@@ -536,29 +541,37 @@ export default function Chat() {
                     setInput(q.question);
                     setMobileSessionsOpen(false);
                   }}
-                  className="w-full text-left flex items-baseline gap-2 text-[12px] text-white/80 hover:text-champagne transition-colors"
+                  className="w-full text-left flex items-baseline gap-2 text-[12px] text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors"
                 >
-                  <span className="num text-[11px] text-champagne shrink-0 w-3.5">{i + 1}.</span>
+                  <span className="num text-[11px] text-[var(--ink-3)] shrink-0 w-3.5">
+                    {i + 1}.
+                  </span>
                   <span className="truncate">{q.question}</span>
                 </button>
               </li>
             ))}
           </ul>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[264px_minmax(0,1fr)] gap-5 h-[calc(100dvh-124px)] min-h-[540px] min-w-0">
-      {/* 玻璃面板 1：桌面端会话侧栏 */}
-      <aside className="hidden lg:flex flex-col min-w-0 glass-panel overflow-hidden">
-        {sessionSidebar}
-      </aside>
+    <div
+      className={`grid grid-cols-1 gap-4 h-[calc(100dvh-116px)] min-h-[520px] min-w-0 ${
+        sidebarOpen ? 'lg:grid-cols-[260px_minmax(0,1fr)]' : 'lg:grid-cols-1'
+      }`}
+    >
+      {/* 桌面端可折叠会话侧栏 */}
+      {sidebarOpen && (
+        <aside className="hidden lg:flex flex-col min-w-0 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-2)] overflow-hidden">
+          {sessionSidebar}
+        </aside>
+      )}
 
-      {/* 移动端会话抽屉 */}
+      {/* 窄屏会话抽屉 */}
       <Drawer
-        title={<span className="text-white">历史会话</span>}
+        title={<span className="text-[var(--ink)] font-medium">历史会话</span>}
         placement="left"
         open={mobileSessionsOpen}
         onClose={() => setMobileSessionsOpen(false)}
@@ -568,28 +581,50 @@ export default function Chat() {
         {sessionSidebar}
       </Drawer>
 
-      {/* 玻璃面板 2：右侧对话主区 */}
-      <section className="glass-panel flex flex-col min-w-0 min-h-0 overflow-hidden">
-        {/* 顶部紧凑知识库状态条 */}
-        <div className="shrink-0 px-4 py-3 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/[0.03]">
+      {/* 主对话工作区 */}
+      <section className="flex flex-col min-w-0 min-h-0 rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface-2)] overflow-hidden">
+        {/* 顶部精简状态栏 */}
+        <div className="shrink-0 px-4 h-12 flex items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--surface-2)]">
           <div className="flex items-center gap-2.5 min-w-0">
+            {/* 桌面端侧栏折叠切换 */}
+            <Tooltip title={sidebarOpen ? '收起会话栏' : '展开会话栏'}>
+              <button
+                type="button"
+                aria-label={sidebarOpen ? '收起会话栏' : '展开会话栏'}
+                onClick={() => setSidebarOpen((v) => !v)}
+                className="hidden lg:grid place-items-center w-7 h-7 rounded-[8px] border border-[var(--border)] text-[var(--ink-2)] hover:text-[var(--ink)] hover:bg-[var(--surface)] transition-colors shrink-0"
+              >
+                {sidebarOpen ? (
+                  <MenuFoldOutlined className="text-[13px]" />
+                ) : (
+                  <MenuUnfoldOutlined className="text-[13px]" />
+                )}
+              </button>
+            </Tooltip>
+
+            {/* 窄屏打开抽屉 */}
             <button
               type="button"
               onClick={() => setMobileSessionsOpen(true)}
-              className="lg:hidden inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[12px] border border-white/15 bg-white/[0.06] text-[12px] text-white hover:border-white/30"
+              className="lg:hidden inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-[var(--border)] bg-[var(--surface)] text-[12px] font-medium text-[var(--ink)] hover:border-[var(--border-strong)] shrink-0"
             >
-              <HistoryOutlined />
-              会话
+              <HistoryOutlined className="text-[12px]" />
+              <span>会话</span>
             </button>
 
-            <div className="flex items-center gap-2 text-[12.5px] text-moon-light min-w-0">
-              <DatabaseOutlined className="text-champagne shrink-0" />
+            <div className="text-[12.5px] text-[var(--ink-2)] truncate">
               {syncStatus ? (
-                <span className="truncate">
-                  知识库已就绪：已同步{' '}
-                  <strong className="num text-white">{syncStatus.synced_docs}</strong> 篇文档 /{' '}
-                  <strong className="num text-white">{syncStatus.indexed_chunks}</strong> 个片段
-                </span>
+                <>
+                  已同步{' '}
+                  <strong className="num font-semibold text-[var(--ink)]">
+                    {syncStatus.synced_docs}
+                  </strong>{' '}
+                  篇文档 ·{' '}
+                  <strong className="num font-semibold text-[var(--ink)]">
+                    {syncStatus.indexed_chunks}
+                  </strong>{' '}
+                  个片段
+                </>
               ) : (
                 <span>正在获取知识库状态…</span>
               )}
@@ -597,196 +632,207 @@ export default function Chat() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {syncStatus && syncStatus.synced_docs === 0 && (
+            {syncStatus && syncStatus.synced_docs === 0 ? (
               <button
                 type="button"
-                onClick={() => navigate('/documents')}
-                className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11.5px] font-medium bg-warn/15 text-warn border border-warn/35 hover:bg-warn/25 transition-colors"
+                onClick={() => navigate('/knowledge/list')}
+                className="inline-flex items-center gap-1 h-7 px-3 rounded-full text-[11.5px] font-medium bg-[var(--status-warn-bg)] text-[var(--status-warn)] border border-[var(--border)] hover:opacity-85 transition-opacity"
               >
-                暂无已同步文档，前往知识库
+                <span>去上传文档</span>
                 <ArrowRightOutlined className="text-[10px]" />
               </button>
-            )}
-            {syncStatus && syncStatus.synced_docs > 0 && pendingChanges > 0 && (
+            ) : syncStatus && pendingChanges > 0 ? (
               <button
                 type="button"
-                onClick={() => navigate('/documents')}
-                className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[11.5px] font-medium bg-champagne/15 text-champagne border border-champagne/40 hover:bg-champagne/25 transition-colors"
+                onClick={() => navigate('/knowledge/list')}
+                className="inline-flex items-center gap-1 h-7 px-3 rounded-full text-[11.5px] font-medium bg-[var(--surface)] text-[var(--ink)] border border-[var(--border-strong)] hover:bg-[var(--surface-hover)] transition-colors"
               >
-                有 {pendingChanges} 项变更待同步
+                <span className="num">{pendingChanges} 项待同步</span>
+                <ArrowRightOutlined className="text-[10px]" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => navigate('/knowledge/list')}
+                className="hidden sm:inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] text-[var(--ink-2)] hover:text-[var(--ink)] hover:bg-[var(--surface)] transition-colors"
+              >
+                <span>知识库</span>
                 <ArrowRightOutlined className="text-[10px]" />
               </button>
             )}
           </div>
         </div>
 
-        {/* 消息流 */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-5">
+        {/* 主消息流 */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 md:px-8 py-6">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-2">
-              <span className="grid place-items-center w-14 h-14 rounded-[18px] bg-white/[0.06] text-champagne border border-champagne/35 text-[24px]">
-                <RobotOutlined />
-              </span>
-              <h2 className="mt-5 text-[20px] font-semibold text-white">有什么可以帮您？</h2>
-              <p className="mt-2 text-[13.5px] text-moon-light max-w-[440px] leading-relaxed">
-                在下方输入问题，我将检索已同步的企业文档为您提供精准解答并附上参考出处。点赞满意的回答可加入优质问答缓存。
+              <h2 className="text-[22px] sm:text-[26px] font-semibold tracking-[-0.03em] text-[var(--ink)]">
+                基于知识库提问
+              </h2>
+              <p className="mt-2 text-[13.5px] text-[var(--ink-2)] max-w-[420px] leading-relaxed">
+                每条回答均附带原文引用角标，点击可核对参考片段。
               </p>
 
-              <div className="mt-7 w-full max-w-[540px] space-y-2.5">
+              <div className="mt-7 w-full max-w-[540px] divide-y divide-[var(--border)] rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
                 {suggestions.map((s, i) => (
                   <button
                     key={i}
                     type="button"
                     onClick={() => setInput(s)}
-                    className="w-full text-left px-4 py-3 rounded-[16px] border border-white/[0.12] bg-white/[0.04] hover:bg-white/[0.09] hover:border-white/[0.25] transition-all duration-300 text-[13px] text-white/85 hover:text-white flex items-center gap-3"
+                    className="w-full text-left px-4 py-3 hover:bg-[var(--surface-hover)] transition-colors text-[13px] text-[var(--ink)] flex items-center justify-between gap-3"
                   >
-                    <span className="num text-[11.5px] font-medium text-champagne shrink-0">
-                      0{i + 1}
-                    </span>
-                    <span className="truncate">{s}</span>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="num text-[11.5px] font-medium text-[var(--ink-3)] shrink-0">
+                        0{i + 1}
+                      </span>
+                      <span className="truncate">{s}</span>
+                    </div>
+                    <ArrowRightOutlined className="text-[11px] text-[var(--ink-3)] shrink-0" />
                   </button>
                 ))}
               </div>
+
+              {syncStatus && syncStatus.synced_docs === 0 && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/knowledge/list')}
+                  className="mt-5 inline-flex items-center gap-1.5 text-[12.5px] font-medium text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors"
+                >
+                  <span>当前知识库为空，前往知识库导入文档</span>
+                  <ArrowRightOutlined className="text-[10px]" />
+                </button>
+              )}
             </div>
           ) : (
-            <div className="space-y-6 max-w-[900px] mx-auto">
+            <div className="space-y-7 max-w-[820px] mx-auto">
               {messages.map((m) =>
                 m.role === 'user' ? (
-                  <div key={m.id} className="flex justify-end gap-2.5">
-                    <div className="max-w-[80%] md:max-w-[72%] rounded-[20px] rounded-tr-[6px] bg-white/[0.12] border border-white/[0.2] text-white px-4 py-3 text-[13.5px] leading-[1.7] whitespace-pre-wrap break-words shadow-sm">
+                  <div key={m.id} className="flex justify-end">
+                    <div className="max-w-[85%] md:max-w-[74%] rounded-[18px] rounded-tr-[6px] bg-[var(--surface)] border border-[var(--border)] text-[var(--ink)] px-4 py-2.5 text-[14px] leading-[1.7] whitespace-pre-wrap break-words">
                       {m.content}
                     </div>
-                    <span className="grid place-items-center w-8 h-8 rounded-full bg-white/[0.08] border border-white/15 text-moon-light text-[13px] shrink-0 mt-0.5">
-                      <UserOutlined />
-                    </span>
                   </div>
                 ) : (
-                  <div key={m.id} className="flex justify-start gap-2.5">
-                    <span className="grid place-items-center w-8 h-8 rounded-full bg-champagne/15 border border-champagne/40 text-champagne text-[14px] shrink-0 mt-0.5">
-                      <RobotOutlined />
-                    </span>
-
-                    <div className="max-w-[88%] md:max-w-[82%] min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1.5 text-[11.5px] text-moon-light">
-                        <span className="font-medium text-white/90">知识库助手</span>
-                        {m.fromCache && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-ok/15 border border-ok/35 text-[10.5px] text-ok">
-                            <ThunderboltOutlined className="text-[10px]" />
-                            已命中优质缓存
-                          </span>
-                        )}
+                  <div key={m.id} className="min-w-0">
+                    {m.fromCache && (
+                      <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] text-[var(--ink-2)]">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--status-ok-bg)] text-[var(--status-ok)] text-[11px] font-medium">
+                          <ThunderboltOutlined className="text-[10px]" />
+                          命中缓存
+                        </span>
                       </div>
+                    )}
 
-                      <div className="rounded-[20px] rounded-tl-[6px] bg-white/[0.05] border border-white/[0.12] px-4 py-3.5">
-                        {m.content ? (
-                          <MarkdownRenderer
-                            content={m.content}
-                            onCitationClick={(idx) => handleCitationClick(m.id, idx)}
-                          />
-                        ) : (
-                          <span className="inline-flex items-center gap-2 text-moon-light text-[13px]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-champagne animate-pulse" />
-                            <span>正在检索知识库并生成回答…</span>
-                          </span>
-                        )}
-                      </div>
-
-                      {m.content && (
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-moon-light">
-                          <Tooltip title={copiedId === m.id ? '已复制' : '复制回答'}>
-                            <button
-                              type="button"
-                              aria-label="复制回答"
-                              onClick={() => copyContent(m.id, m.content)}
-                              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] hover:bg-white/10 hover:text-white transition-colors"
-                            >
-                              {copiedId === m.id ? (
-                                <CheckOutlined className="text-ok text-[12px]" />
-                              ) : (
-                                <CopyOutlined className="text-[12px]" />
-                              )}
-                              <span>{copiedId === m.id ? '已复制' : '复制'}</span>
-                            </button>
-                          </Tooltip>
-
-                          {m.recordId && (
-                            <>
-                              <Tooltip title="点赞并加入问答缓存">
-                                <button
-                                  type="button"
-                                  aria-label="点赞并加入问答缓存"
-                                  onClick={() => submitFeedback(m.recordId!, 1)}
-                                  className={`grid place-items-center w-7 h-7 rounded-full hover:bg-white/10 transition-colors ${
-                                    m.feedback === 1
-                                      ? 'text-champagne bg-champagne/15 border border-champagne/35'
-                                      : ''
-                                  }`}
-                                >
-                                  <LikeOutlined className="text-[12px]" />
-                                </button>
-                              </Tooltip>
-                              <Tooltip title="点踩并移除此条问答缓存">
-                                <button
-                                  type="button"
-                                  aria-label="点踩并移除此条问答缓存"
-                                  onClick={() => submitFeedback(m.recordId!, 2)}
-                                  className={`grid place-items-center w-7 h-7 rounded-full hover:bg-white/10 transition-colors ${
-                                    m.feedback === 2
-                                      ? 'text-danger bg-danger/15 border border-danger/35'
-                                      : ''
-                                  }`}
-                                >
-                                  <DislikeOutlined className="text-[12px]" />
-                                </button>
-                              </Tooltip>
-                            </>
-                          )}
-
-                          {m.fromCache && m.questionText && (
-                            <Tooltip title="跳过缓存重新检索知识库并生成回答">
-                              <button
-                                type="button"
-                                disabled={loading}
-                                onClick={() => retryWithoutCache(m)}
-                                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] text-moon-light hover:bg-white/10 hover:text-champagne disabled:opacity-40 transition-colors"
-                              >
-                                <ReloadOutlined className="text-[11px]" />
-                                <span>重新检索</span>
-                              </button>
-                            </Tooltip>
-                          )}
-
-                          {m.sources && m.sources.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => toggleSources(m.id)}
-                              aria-expanded={expandedSources.has(m.id)}
-                              className="ml-1 inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-[12px] text-white/85 bg-white/[0.05] border border-white/12 hover:border-champagne/40 hover:text-champagne transition-colors"
-                            >
-                              <PaperClipOutlined className="text-[11px]" />
-                              <span>参考来源</span>
-                              <span className="num text-[11px] font-semibold text-champagne">
-                                {m.sources.length}
-                              </span>
-                              <DownOutlined
-                                className={`text-[10px] transition-transform duration-200 ${
-                                  expandedSources.has(m.id) ? 'rotate-180' : ''
-                                }`}
-                              />
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {m.sources && m.sources.length > 0 && expandedSources.has(m.id) && (
-                        <SourceCards
-                          sources={m.sources}
-                          highlightedIndex={
-                            highlightedSource?.msgId === m.id ? highlightedSource.index : null
-                          }
+                    <div className="min-w-0 text-[var(--ink)]">
+                      {m.content ? (
+                        <MarkdownRenderer
+                          content={m.content}
+                          onCitationClick={(idx) => handleCitationClick(m.id, idx)}
                         />
+                      ) : (
+                        <span className="inline-flex items-center gap-2 text-[var(--ink-2)] text-[13.5px] py-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[var(--ink)] animate-pulse" />
+                          <span>正在检索知识库并生成回答…</span>
+                        </span>
                       )}
                     </div>
+
+                    {m.content && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1 text-[var(--ink-2)]">
+                        <Tooltip title={copiedId === m.id ? '已复制' : '复制回答'}>
+                          <button
+                            type="button"
+                            aria-label="复制回答"
+                            onClick={() => copyContent(m.id, m.content)}
+                            className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] hover:bg-[var(--surface)] hover:text-[var(--ink)] transition-colors"
+                          >
+                            {copiedId === m.id ? (
+                              <CheckOutlined className="text-[var(--status-ok)] text-[12px]" />
+                            ) : (
+                              <CopyOutlined className="text-[12px]" />
+                            )}
+                            <span>{copiedId === m.id ? '已复制' : '复制'}</span>
+                          </button>
+                        </Tooltip>
+
+                        {m.recordId && (
+                          <>
+                            <Tooltip title="点赞并加入问答缓存">
+                              <button
+                                type="button"
+                                aria-label="点赞并加入问答缓存"
+                                onClick={() => submitFeedback(m.recordId!, 1)}
+                                className={`grid place-items-center w-7 h-7 rounded-full transition-colors ${
+                                  m.feedback === 1
+                                    ? 'bg-[var(--accent)] text-[var(--accent-ink)]'
+                                    : 'hover:bg-[var(--surface)] hover:text-[var(--ink)]'
+                                }`}
+                              >
+                                <LikeOutlined className="text-[12px]" />
+                              </button>
+                            </Tooltip>
+                            <Tooltip title="点踩并移除此条问答缓存">
+                              <button
+                                type="button"
+                                aria-label="点踩并移除此条问答缓存"
+                                onClick={() => submitFeedback(m.recordId!, 2)}
+                                className={`grid place-items-center w-7 h-7 rounded-full transition-colors ${
+                                  m.feedback === 2
+                                    ? 'bg-[var(--status-danger-bg)] text-[var(--status-danger)]'
+                                    : 'hover:bg-[var(--surface)] hover:text-[var(--ink)]'
+                                }`}
+                              >
+                                <DislikeOutlined className="text-[12px]" />
+                              </button>
+                            </Tooltip>
+                          </>
+                        )}
+
+                        {m.fromCache && m.questionText && (
+                          <Tooltip title="跳过缓存重新检索知识库并生成回答">
+                            <button
+                              type="button"
+                              disabled={loading}
+                              onClick={() => retryWithoutCache(m)}
+                              className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full text-[12px] text-[var(--ink-2)] hover:bg-[var(--surface)] hover:text-[var(--ink)] disabled:opacity-40 transition-colors"
+                            >
+                              <ReloadOutlined className="text-[11px]" />
+                              <span>重新检索</span>
+                            </button>
+                          </Tooltip>
+                        )}
+
+                        {m.sources && m.sources.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => toggleSources(m.id)}
+                            aria-expanded={expandedSources.has(m.id)}
+                            className="ml-1 inline-flex items-center gap-1.5 h-7 px-3 rounded-full text-[12px] text-[var(--ink)] bg-[var(--surface)] border border-[var(--border)] hover:border-[var(--border-strong)] transition-colors"
+                          >
+                            <PaperClipOutlined className="text-[11px] text-[var(--ink-2)]" />
+                            <span>参考来源</span>
+                            <span className="num text-[11px] font-semibold">
+                              {m.sources.length}
+                            </span>
+                            <DownOutlined
+                              className={`text-[10px] text-[var(--ink-3)] transition-transform duration-200 ${
+                                expandedSources.has(m.id) ? 'rotate-180' : ''
+                              }`}
+                            />
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {m.sources && m.sources.length > 0 && expandedSources.has(m.id) && (
+                      <SourceCards
+                        sources={m.sources}
+                        highlightedIndex={
+                          highlightedSource?.msgId === m.id ? highlightedSource.index : null
+                        }
+                      />
+                    )}
                   </div>
                 ),
               )}
@@ -796,12 +842,12 @@ export default function Chat() {
         </div>
 
         {/* 底部输入区 */}
-        <div className="shrink-0 border-t border-white/10 p-3.5 md:p-4 bg-white/[0.03]">
-          <div className="max-w-[900px] mx-auto rounded-[18px] border border-white/[0.15] bg-white/[0.04] focus-within:border-white/40 focus-within:shadow-[0_0_0_3px_rgba(255,255,255,0.08)] transition-all duration-500 ease-liquid">
+        <div className="shrink-0 border-t border-[var(--border)] p-3 sm:p-4 bg-[var(--surface-2)]">
+          <div className="max-w-[820px] mx-auto rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--bg)] focus-within:border-[var(--border-strong)] transition-colors">
             <Input.TextArea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="输入您想咨询的问题，基于企业知识库实时检索解答…"
+              placeholder="输入问题，基于知识库检索并附带引用溯源…"
               autoSize={{ minRows: 1, maxRows: 5 }}
               variant="borderless"
               onPressEnter={(e) => {
@@ -810,10 +856,10 @@ export default function Chat() {
                   sendMessage();
                 }
               }}
-              className="!px-4 !py-3 !text-[14px]"
+              className="!px-3.5 !py-2.5 !text-[14px]"
             />
-            <div className="flex items-center justify-between px-3.5 pb-3 pt-1">
-              <span className="text-[11.5px] text-moon-light/75">
+            <div className="flex items-center justify-between px-3 pb-2.5 pt-1">
+              <span className="text-[11.5px] text-[var(--ink-3)]">
                 Enter 发送 · Shift + Enter 换行
               </span>
 
@@ -823,7 +869,7 @@ export default function Chat() {
                   size="small"
                   icon={<StopOutlined />}
                   onClick={stopGeneration}
-                  className="!rounded-full !px-3.5"
+                  className="!rounded-full !px-3.5 !h-8"
                 >
                   停止生成
                 </Button>
@@ -832,7 +878,7 @@ export default function Chat() {
                   icon={<SendOutlined />}
                   onClick={sendMessage}
                   disabled={!input.trim()}
-                  className="btn-champagne !px-5 !h-8"
+                  className="apple-btn-primary !px-4 !h-8 !text-[13px]"
                 >
                   发送
                 </Button>

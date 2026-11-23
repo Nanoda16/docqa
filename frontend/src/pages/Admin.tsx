@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Button,
   message,
   Table,
-  Tag,
   Input,
   Badge,
   Popconfirm,
@@ -22,6 +22,7 @@ import {
   ThunderboltOutlined,
   SearchOutlined,
   EyeOutlined,
+  ArrowLeftOutlined,
 } from '@ant-design/icons';
 import api from '../services/api';
 
@@ -39,31 +40,27 @@ interface CacheKeyDetail extends CacheKeyItem {
 
 const CATEGORY_META: Record<
   string,
-  { label: string; color: string; bg: string; border: string }
+  { label: string; colorVar: string; bgVar: string }
 > = {
   qa: {
     label: '问答缓存 (qa)',
-    color: '#e4b863',
-    bg: 'rgba(228, 184, 99, 0.14)',
-    border: 'rgba(228, 184, 99, 0.35)',
+    colorVar: 'var(--ink)',
+    bgVar: 'var(--surface)',
   },
   session: {
     label: '会话历史 (session)',
-    color: '#7c9cc4',
-    bg: 'rgba(124, 156, 196, 0.14)',
-    border: 'rgba(124, 156, 196, 0.35)',
+    colorVar: 'var(--ink-2)',
+    bgVar: 'var(--surface)',
   },
   hot: {
     label: '热门统计 (hot)',
-    color: '#34d399',
-    bg: 'rgba(52, 211, 153, 0.12)',
-    border: 'rgba(52, 211, 153, 0.32)',
+    colorVar: 'var(--status-ok)',
+    bgVar: 'var(--status-ok-bg)',
   },
   other: {
     label: '其他',
-    color: 'rgba(255, 255, 255, 0.78)',
-    bg: 'rgba(255, 255, 255, 0.06)',
-    border: 'rgba(255, 255, 255, 0.16)',
+    colorVar: 'var(--ink-3)',
+    bgVar: 'var(--surface)',
   },
 };
 
@@ -75,9 +72,6 @@ function inferCategory(record: CacheKeyItem): string {
   return 'other';
 }
 
-/**
- * 人性化格式化剩余有效期
- */
 function formatTtl(seconds: number): string {
   if (seconds < 0) return '永不过期 / 已失效';
   if (seconds < 60) return `${seconds} 秒`;
@@ -113,6 +107,22 @@ function formatPreviewValue(val: unknown): string {
   }
 }
 
+function CategoryPill({ record }: { record: CacheKeyItem }) {
+  const cat = inferCategory(record);
+  const meta = CATEGORY_META[cat] ?? CATEGORY_META.other;
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-0.5 text-[12px] font-medium rounded-full border border-[var(--border)] whitespace-nowrap"
+      style={{
+        color: meta.colorVar,
+        backgroundColor: meta.bgVar,
+      }}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 function MetricTile({
   label,
   value,
@@ -125,18 +135,22 @@ function MetricTile({
   sub?: React.ReactNode;
 }) {
   return (
-    <div className="glass-tile p-5">
-      <div className="flex items-center gap-2 text-[12px] font-medium text-moon-light">
-        <span className="text-moon-light">{icon}</span>
+    <div className="apple-surface p-5">
+      <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--ink-3)]">
+        <span>{icon}</span>
         <span>{label}</span>
       </div>
-      <div className="mt-3 num text-[32px] font-semibold leading-none text-white">{value}</div>
-      {sub && <div className="mt-2.5 text-[12px] text-moon-light/85">{sub}</div>}
+      <div className="mt-3 num text-[30px] font-semibold leading-none text-[var(--ink)]">
+        {value}
+      </div>
+      {sub && <div className="mt-2.5 text-[12px] text-[var(--ink-2)]">{sub}</div>}
     </div>
   );
 }
 
 export default function Admin() {
+  const navigate = useNavigate();
+
   const [stats, setStats] = useState<any>({});
   const [keys, setKeys] = useState<CacheKeyItem[]>([]);
   const [keyPattern, setKeyPattern] = useState('doc:qa:*');
@@ -198,9 +212,7 @@ export default function Admin() {
     setDetailLoading(true);
     setKeyDetail(null);
     try {
-      const res: any = await api.get(
-        `/admin/cache/key?key=${encodeURIComponent(key)}`,
-      );
+      const res: any = await api.get(`/admin/cache/key?key=${encodeURIComponent(key)}`);
       if (res?.code === 200 && res?.data) {
         setKeyDetail(res.data);
       }
@@ -259,42 +271,29 @@ export default function Admin() {
         <button
           type="button"
           onClick={() => openKeyDetail(record.key)}
-          className="text-left w-full min-w-0 group"
+          className="text-left w-full min-w-0 group cursor-pointer"
         >
-          <div className="text-[13px] font-medium text-white group-hover:text-champagne transition-colors truncate">
+          <div className="text-[13px] font-medium text-[var(--ink)] group-hover:underline underline-offset-2 truncate">
             {record.label || record.key}
           </div>
-          <div className="num text-[11.5px] text-moon-light truncate">{record.key}</div>
+          <div className="num text-[11.5px] text-[var(--ink-3)] truncate">{record.key}</div>
         </button>
       ),
     },
     {
       title: '分类',
       dataIndex: 'category',
-      width: 150,
-      render: (_: string, record: CacheKeyItem) => {
-        const cat = inferCategory(record);
-        const meta = CATEGORY_META[cat] ?? CATEGORY_META.other;
-        return (
-          <Tag
-            className="!m-0 font-medium"
-            style={{
-              color: meta.color,
-              backgroundColor: meta.bg,
-              borderColor: meta.border,
-            }}
-          >
-            {meta.label}
-          </Tag>
-        );
-      },
+      width: 156,
+      render: (_: string, record: CacheKeyItem) => <CategoryPill record={record} />,
     },
     {
       title: '数据类型',
       dataIndex: 'type',
       width: 100,
       render: (t: string) => (
-        <Tag className="!m-0 !bg-white/[0.06] !border-white/15 !text-moon-light">{t}</Tag>
+        <span className="num inline-block px-2 py-0.5 text-[12px] rounded-full bg-[var(--surface)] border border-[var(--border)] text-[var(--ink-2)]">
+          {t}
+        </span>
       ),
     },
     {
@@ -303,7 +302,7 @@ export default function Admin() {
       width: 145,
       render: (t: number) => (
         <Tooltip title={t >= 0 ? `精确剩余：${t.toLocaleString()} 秒` : `原始 TTL：${t}`}>
-          <span className="num text-white/90 whitespace-nowrap cursor-help">
+          <span className="num text-[var(--ink)] whitespace-nowrap cursor-help">
             {formatTtl(t)}
           </span>
         </Tooltip>
@@ -312,7 +311,7 @@ export default function Admin() {
     {
       title: '操作',
       key: 'actions',
-      width: 150,
+      width: 145,
       fixed: 'right',
       render: (_: any, record: CacheKeyItem) => (
         <Space size={2} className="whitespace-nowrap">
@@ -350,18 +349,13 @@ export default function Admin() {
         okType="danger"
         cancelText="取消"
       >
-        <Button
-          danger
-          loading={batchDeleting}
-          icon={<DeleteOutlined />}
-          className="!rounded-btn !border-danger/50 !bg-danger/15 !text-danger hover:!bg-danger/25"
-        >
+        <Button danger loading={batchDeleting} icon={<DeleteOutlined />}>
           批量删除 ({selectedKeys.length})
         </Button>
       </Popconfirm>
     ) : (
       <Tooltip title="勾选下方缓存键后可批量删除">
-        <Button disabled icon={<DeleteOutlined />} className="btn-glass">
+        <Button disabled icon={<DeleteOutlined />} className="apple-btn-secondary">
           批量删除
         </Button>
       </Tooltip>
@@ -369,24 +363,64 @@ export default function Admin() {
 
   return (
     <div className="space-y-5 min-w-0">
-      {/* 玻璃面板 1：缓存运行概览 */}
-      <div className="glass-panel p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-5 border-b border-white/10">
-          <div>
-            <h2 className="text-[16px] font-semibold text-white">缓存运行概览</h2>
-            <p className="mt-1 text-[13px] text-moon-light">
-              实时监控问答结果缓存、会话上下文与内存占用
-            </p>
+      {/* 顶部控制台二级导航栏 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            className="apple-btn-secondary"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/console')}
+          >
+            控制台
+          </Button>
+
+          <div
+            role="tablist"
+            aria-label="控制台子模块"
+            className="inline-flex items-center p-1 rounded-full bg-[var(--surface)] border border-[var(--border)]"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected="true"
+              onClick={() => navigate('/console/cache')}
+              className="px-3.5 py-1 text-[13px] font-medium rounded-full bg-[var(--accent)] text-[var(--accent-ink)] cursor-pointer"
+            >
+              缓存监控
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="false"
+              onClick={() => navigate('/console/users')}
+              className="px-3.5 py-1 text-[13px] font-medium rounded-full text-[var(--ink-2)] hover:text-[var(--ink)] transition-colors cursor-pointer"
+            >
+              人员管理
+            </button>
           </div>
-          <div className="flex items-center gap-3">
-            <Badge
-              status={stats.server_type === 'real' ? 'success' : 'processing'}
-              text={<span className="text-[13px] text-moon-light">{serverLabel}</span>}
-            />
-            <Button className="btn-glass" icon={<ReloadOutlined />} onClick={loadCacheData}>
-              立即刷新
-            </Button>
-          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Badge
+            status={stats.server_type === 'real' ? 'success' : 'processing'}
+            text={<span className="text-[13px] text-[var(--ink-2)]">{serverLabel}</span>}
+          />
+          <Button
+            className="apple-btn-secondary"
+            icon={<ReloadOutlined />}
+            onClick={loadCacheData}
+          >
+            刷新
+          </Button>
+        </div>
+      </div>
+
+      {/* 面板 1：缓存运行概览 */}
+      <div className="apple-card p-6">
+        <div className="pb-4 mb-5 border-b border-[var(--border)]">
+          <h1 className="text-[17px] font-semibold tracking-[-0.02em] text-[var(--ink)]">
+            缓存运行概览
+          </h1>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -397,7 +431,7 @@ export default function Admin() {
             sub={
               <>
                 命中率{' '}
-                <span className="num font-medium text-white">
+                <span className="num font-medium text-[var(--ink)]">
                   {stats.hit_ratio !== undefined && stats.hit_ratio !== 'N/A'
                     ? `${stats.hit_ratio}%`
                     : '-'}
@@ -430,10 +464,10 @@ export default function Admin() {
         </div>
       </div>
 
-      {/* 玻璃面板 2：快捷维护与热点预热（唯一香槟金主 CTA = 热点预热） */}
-      <div className="glass-panel p-5 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className="text-[13px] font-medium text-moon-light mr-1">快捷清理：</span>
+      {/* 面板 2：快捷维护与热点预热 */}
+      <div className="apple-card p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] font-medium text-[var(--ink-2)] mr-1">快捷清理：</span>
           <Popconfirm
             title="确认清空全部缓存？"
             onConfirm={() => clearCache('all')}
@@ -441,31 +475,35 @@ export default function Admin() {
             okType="danger"
             cancelText="取消"
           >
-            <Button
-              danger
-              icon={<DeleteOutlined />}
-              className="!rounded-btn !bg-danger/10 !border-danger/40 !text-danger hover:!bg-danger/20"
-            >
+            <Button danger icon={<DeleteOutlined />}>
               清空全部
             </Button>
           </Popconfirm>
-          <Button className="btn-glass" icon={<DeleteOutlined />} onClick={() => clearCache('qa')}>
+          <Button
+            className="apple-btn-secondary"
+            icon={<DeleteOutlined />}
+            onClick={() => clearCache('qa')}
+          >
             清空问答缓存
           </Button>
           <Button
-            className="btn-glass"
+            className="apple-btn-secondary"
             icon={<DeleteOutlined />}
             onClick={() => clearCache('sessions')}
           >
             清空会话缓存
           </Button>
-          <Button className="btn-glass" icon={<ReloadOutlined />} onClick={() => clearCache('hot')}>
+          <Button
+            className="apple-btn-secondary"
+            icon={<ReloadOutlined />}
+            onClick={() => clearCache('hot')}
+          >
             重置热门统计
           </Button>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <span className="text-[13px] text-moon-light">热门预热条数</span>
+          <span className="text-[13px] text-[var(--ink-2)]">热门预热条数</span>
           <Input
             type="number"
             value={warmupLimit}
@@ -473,10 +511,11 @@ export default function Admin() {
             style={{ width: 80 }}
             min={1}
             aria-label="预热条数"
+            className="num"
           />
           <Button
             icon={<FireOutlined />}
-            className="btn-champagne !px-5"
+            className="apple-btn-primary !px-5"
             onClick={async () => {
               try {
                 const r: any = await api.post(`/admin/cache/warmup?limit=${warmupLimit}`);
@@ -492,14 +531,14 @@ export default function Admin() {
         </div>
       </div>
 
-      {/* 玻璃面板 3：缓存键明细（支持单条查看/删除与批量勾选删除） */}
-      <div className="glass-panel min-w-0">
-        <div className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] bg-white/[0.03]">
+      {/* 面板 3：缓存键明细 */}
+      <div className="apple-card min-w-0">
+        <div className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)]">
           <div className="space-y-0.5">
-            <div className="text-[13px] font-medium text-white">
-              缓存键明细（共 <strong className="num text-champagne">{keys.length}</strong> 条）
+            <div className="text-[14px] font-medium text-[var(--ink)]">
+              缓存键明细（共 <strong className="num">{keys.length}</strong> 条）
             </div>
-            <div className="text-[12px] text-moon-light">
+            <div className="text-[12px] text-[var(--ink-3)]">
               问答缓存来自用户点赞确认；会话历史与热门统计默认保留 7 天
             </div>
           </div>
@@ -519,19 +558,18 @@ export default function Admin() {
             <Input
               value={keyPattern}
               onChange={(e) => setKeyPattern(e.target.value)}
-              style={{ width: 210 }}
+              className="num w-full sm:w-[210px]"
               onPressEnter={loadCacheData}
-              prefix={<SearchOutlined className="text-moon-light" />}
+              prefix={<SearchOutlined className="text-[var(--ink-3)]" />}
               placeholder="输入匹配模式，如 doc:qa:*"
-              className="num"
             />
-            <Button className="btn-glass" onClick={loadCacheData}>
+            <Button className="apple-btn-secondary" onClick={loadCacheData}>
               查询
             </Button>
           </div>
         </div>
 
-        <div className="glass-table min-w-0">
+        <div className="apple-table min-w-0">
           <Table<CacheKeyItem>
             rowKey="key"
             dataSource={keys}
@@ -547,7 +585,7 @@ export default function Admin() {
               pageSize: 15,
               showSizeChanger: true,
               pageSizeOptions: ['10', '15', '30', '50'],
-              showTotal: (t) => <span className="text-moon-light">共 {t} 条</span>,
+              showTotal: (t) => <span className="num text-[var(--ink-2)]">共 {t} 条</span>,
             }}
             columns={columns}
           />
@@ -556,7 +594,7 @@ export default function Admin() {
 
       {/* 单条缓存内容预览抽屉 */}
       <Drawer
-        title={<span className="text-white">缓存条目详情</span>}
+        title="缓存条目详情"
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
         width={620}
@@ -570,12 +608,7 @@ export default function Admin() {
               okType="danger"
               cancelText="取消"
             >
-              <Button
-                danger
-                size="small"
-                icon={<DeleteOutlined />}
-                className="!rounded-btn !bg-danger/10 !border-danger/40 !text-danger hover:!bg-danger/20"
-              >
+              <Button danger size="small" icon={<DeleteOutlined />}>
                 删除条目
               </Button>
             </Popconfirm>
@@ -592,33 +625,18 @@ export default function Admin() {
                 {
                   label: '可读描述',
                   children: (
-                    <span className="font-medium text-white">
+                    <span className="font-medium text-[var(--ink)]">
                       {keyDetail.label || keyDetail.key}
                     </span>
                   ),
                 },
                 {
                   label: '原始键名',
-                  children: <span className="num text-[12px] text-moon-light">{keyDetail.key}</span>,
+                  children: <span className="num text-[12px] text-[var(--ink-2)]">{keyDetail.key}</span>,
                 },
                 {
                   label: '缓存分类',
-                  children: (() => {
-                    const cat = inferCategory(keyDetail);
-                    const meta = CATEGORY_META[cat] ?? CATEGORY_META.other;
-                    return (
-                      <Tag
-                        className="!m-0"
-                        style={{
-                          color: meta.color,
-                          backgroundColor: meta.bg,
-                          borderColor: meta.border,
-                        }}
-                      >
-                        {meta.label}
-                      </Tag>
-                    );
-                  })(),
+                  children: <CategoryPill record={keyDetail} />,
                 },
                 {
                   label: '数据类型',
@@ -637,8 +655,8 @@ export default function Admin() {
             />
 
             <div>
-              <div className="text-[13px] font-medium text-moon-light mb-2">缓存内容预览</div>
-              <pre className="m-0 rounded-[16px] border border-white/12 bg-night-deep/65 p-4 text-[12.5px] leading-[1.68] text-white/90 font-mono whitespace-pre-wrap break-words max-h-[52vh] overflow-y-auto">
+              <div className="text-[13px] font-medium text-[var(--ink-2)] mb-2">缓存内容预览</div>
+              <pre className="m-0 rounded-[14px] border border-[var(--border)] bg-[var(--surface)] p-4 text-[12.5px] leading-[1.68] text-[var(--ink)] font-mono whitespace-pre-wrap break-words max-h-[52vh] overflow-y-auto">
                 {formatPreviewValue(keyDetail.value)}
               </pre>
             </div>

@@ -1,43 +1,111 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Avatar, Drawer, Dropdown, Tooltip } from 'antd';
 import {
-  MessageOutlined,
-  FileTextOutlined,
   UserOutlined,
   LogoutOutlined,
-  DashboardOutlined,
-  TeamOutlined,
   MenuOutlined,
-  BookOutlined,
+  SearchOutlined,
+  SunOutlined,
+  MoonOutlined,
+  ArrowLeftOutlined,
+  RightOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getRoleLabel, ROLE_META } from '../types';
+import { useTheme } from '../context/ThemeContext';
+import { getRoleLabel } from '../types';
+import CommandPalette from './CommandPalette';
 
-interface NavItem {
+interface TopNavItem {
   key: string;
-  icon: React.ReactNode;
   label: string;
+  matchPrefix?: string;
 }
 
-interface NavGroup {
-  title: string;
-  items: NavItem[];
+interface Crumb {
+  label: string;
+  path?: string;
 }
 
-const PAGE_META: Record<string, { title: string; desc: string }> = {
-  '/chat': { title: '智能问答', desc: '基于企业知识库的精准检索与对话' },
-  '/documents': { title: '知识库文档', desc: '文档维护、向量索引同步与管理' },
-  '/profile': { title: '个人中心', desc: '个人资料与账号安全设置' },
-  '/users': { title: '人员管理', desc: '成员账号、角色权限与状态控制' },
-  '/admin': { title: '缓存监控', desc: '问答缓存运行状态与热点管理' },
-};
+function getBreadcrumbs(pathname: string): { crumbs: Crumb[]; parentPath: string } | null {
+  if (pathname === '/' || pathname === '') return null;
+
+  if (pathname === '/chat') {
+    return {
+      crumbs: [{ label: '工作台', path: '/' }, { label: '智能问答' }],
+      parentPath: '/',
+    };
+  }
+  if (pathname === '/knowledge/list' || pathname === '/knowledge') {
+    return {
+      crumbs: [
+        { label: '工作台', path: '/' },
+        { label: '知识库', path: '/knowledge/list' },
+        { label: '文档列表' },
+      ],
+      parentPath: '/',
+    };
+  }
+  if (pathname === '/knowledge/upload') {
+    return {
+      crumbs: [
+        { label: '工作台', path: '/' },
+        { label: '知识库', path: '/knowledge/list' },
+        { label: '上传与索引' },
+      ],
+      parentPath: '/knowledge/list',
+    };
+  }
+  if (pathname === '/console') {
+    return {
+      crumbs: [{ label: '工作台', path: '/' }, { label: '系统控制台' }],
+      parentPath: '/',
+    };
+  }
+  if (pathname === '/console/cache') {
+    return {
+      crumbs: [
+        { label: '工作台', path: '/' },
+        { label: '系统控制台', path: '/console' },
+        { label: '缓存监控' },
+      ],
+      parentPath: '/console',
+    };
+  }
+  if (pathname === '/console/users') {
+    return {
+      crumbs: [
+        { label: '工作台', path: '/' },
+        { label: '系统控制台', path: '/console' },
+        { label: '人员管理' },
+      ],
+      parentPath: '/console',
+    };
+  }
+  if (pathname === '/account/profile') {
+    return {
+      crumbs: [{ label: '工作台', path: '/' }, { label: '个人中心' }],
+      parentPath: '/',
+    };
+  }
+
+  return {
+    crumbs: [{ label: '工作台', path: '/' }],
+    parentPath: '/',
+  };
+}
 
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const isAdmin = user?.role === 'admin';
+  const isChatRoute = location.pathname === '/chat';
 
   useEffect(() => {
     if (!user) {
@@ -45,41 +113,71 @@ export default function AppLayout() {
     }
   }, [user, navigate]);
 
+  // 全局 Cmd/Ctrl + K 快捷键唤醒命令面板
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const topNavItems = useMemo<TopNavItem[]>(() => {
+    const base: TopNavItem[] = [
+      { key: '/', label: '工作台' },
+      { key: '/chat', label: '智能问答', matchPrefix: '/chat' },
+      { key: '/knowledge/list', label: '知识库', matchPrefix: '/knowledge' },
+    ];
+    if (isAdmin) {
+      base.push({ key: '/console', label: '控制台', matchPrefix: '/console' });
+    }
+    return base;
+  }, [isAdmin]);
+
+  const isNavActive = (item: TopNavItem) => {
+    if (item.key === '/') return location.pathname === '/';
+    if (item.matchPrefix) return location.pathname.startsWith(item.matchPrefix);
+    return location.pathname === item.key;
+  };
+
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
-  const navGroups: NavGroup[] = [
-    {
-      title: '工作台',
-      items: [
-        { key: '/chat', icon: <MessageOutlined />, label: '智能问答' },
-        { key: '/documents', icon: <FileTextOutlined />, label: '知识库文档' },
-      ],
-    },
-  ];
+  const handleNavClick = (path: string) => {
+    navigate(path);
+    setMobileMenuOpen(false);
+  };
 
-  if (user?.role === 'admin') {
-    navGroups.push({
-      title: '系统管理',
-      items: [
-        { key: '/users', icon: <TeamOutlined />, label: '人员管理' },
-        { key: '/admin', icon: <DashboardOutlined />, label: '缓存监控' },
-      ],
-    });
-  }
-
-  const meta = PAGE_META[location.pathname] ?? PAGE_META['/chat'];
   const roleLabel = getRoleLabel(user?.role);
-  const roleStyle = ROLE_META[user?.role || 'user'] ?? ROLE_META.user;
+  const displayName = user?.nickname || user?.username || '用户';
+  const breadcrumbData = getBreadcrumbs(location.pathname);
 
   const dropdownItems = [
+    {
+      key: 'identity',
+      disabled: true,
+      label: (
+        <div className="py-1 cursor-default">
+          <div className="text-[13px] font-medium" style={{ color: 'var(--ink)' }}>
+            {displayName}
+          </div>
+          <div className="text-[11.5px]" style={{ color: 'var(--ink-2)' }}>
+            {roleLabel}
+          </div>
+        </div>
+      ),
+    },
+    { type: 'divider' as const },
     {
       key: 'profile',
       icon: <UserOutlined />,
       label: '个人中心',
-      onClick: () => navigate('/profile'),
+      onClick: () => navigate('/account/profile'),
     },
     { type: 'divider' as const },
     {
@@ -91,174 +189,271 @@ export default function AppLayout() {
     },
   ];
 
-  const handleNavClick = (path: string) => {
-    navigate(path);
-    setMobileMenuOpen(false);
-  };
-
-  const sidebarContent = (
-    <div className="flex flex-col h-full">
-      {/* 品牌 Logo */}
-      <div className="px-4 h-[72px] flex items-center border-b border-white/10 shrink-0">
-        <button
-          onClick={() => handleNavClick('/chat')}
-          className="flex items-center gap-2.5 text-left w-full rounded-btn py-1"
-          aria-label="回到智能问答"
-        >
-          <span className="grid place-items-center w-9 h-9 rounded-[12px] bg-white/[0.08] border border-champagne/40 text-champagne text-[16px] shrink-0">
-            <BookOutlined />
-          </span>
-          <span className="text-[15px] font-medium text-white tracking-tight truncate">
-            DocQA · 企业知识库
-          </span>
-        </button>
-      </div>
-
-      {/* 分组导航 */}
-      <nav className="flex-1 overflow-y-auto px-3 py-5 space-y-6" aria-label="主导航">
-        {navGroups.map((group) => (
-          <div key={group.title}>
-            <div className="px-3 mb-2 text-[11.5px] font-medium text-moon-light/70">
-              {group.title}
-            </div>
-            <ul className="space-y-1.5">
-              {group.items.map((item) => {
-                const active = location.pathname === item.key;
-                return (
-                  <li key={item.key}>
-                    <button
-                      data-active={active}
-                      onClick={() => handleNavClick(item.key)}
-                      aria-current={active ? 'page' : undefined}
-                      className="nav-item"
-                    >
-                      <span className={active ? 'text-champagne' : 'text-moon-light'}>
-                        {item.icon}
-                      </span>
-                      <span className="truncate">{item.label}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-      </nav>
-
-      {/* 底部用户信息 */}
-      <div className="p-3 border-t border-white/10 shrink-0">
-        <div className="glass-tile flex items-center gap-2.5 p-2.5">
-          <button
-            onClick={() => handleNavClick('/profile')}
-            className="flex items-center gap-2.5 min-w-0 flex-1 text-left group"
-            title="前往个人中心"
-          >
-            <Avatar
-              size={34}
-              src={user?.avatar || undefined}
-              className="!bg-white/10 !text-champagne border border-white/15 shrink-0 font-medium"
-              icon={!user?.avatar ? <UserOutlined /> : undefined}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium text-white truncate group-hover:text-champagne transition-colors duration-300">
-                {user?.nickname || user?.username || '未登录'}
-              </div>
-              <div className="mt-1">
-                <span
-                  className="inline-block px-2 py-0.5 text-[10.5px] font-medium rounded-full leading-none border"
-                  style={{
-                    color: roleStyle.color,
-                    backgroundColor: roleStyle.bg,
-                    borderColor: roleStyle.border,
-                  }}
-                >
-                  {roleLabel}
-                </span>
-              </div>
-            </div>
-          </button>
-
-          <Tooltip title="退出登录">
-            <button
-              onClick={handleLogout}
-              aria-label="退出登录"
-              className="grid place-items-center w-8 h-8 rounded-[12px] text-moon-light hover:text-danger hover:bg-white/10 transition-colors duration-300 shrink-0"
-            >
-              <LogoutOutlined />
-            </button>
-          </Tooltip>
-        </div>
-      </div>
-    </div>
-  );
-
   return (
-    <div className="min-h-screen flex min-w-0">
+    <div
+      className="min-h-screen flex flex-col min-w-0"
+      style={{ background: 'var(--bg)', color: 'var(--ink)' }}
+    >
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-btn focus:bg-night focus:text-white focus:border focus:border-white/20"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-full"
+        style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
       >
         跳到主要内容
       </a>
 
-      {/* 桌面端玻璃侧栏 */}
-      <aside className="hidden md:flex w-[240px] shrink-0 flex-col bg-white/[0.04] backdrop-blur-[40px] backdrop-saturate-[180%] border-r border-white/[0.12]">
-        {sidebarContent}
-      </aside>
+      {/* 顶层粘性毛玻璃导航栏 */}
+      <header className="sticky top-0 z-40 h-14 shrink-0 apple-header">
+        <div className="mx-auto h-full w-full max-w-[1360px] px-4 sm:px-6 flex items-center justify-between gap-3">
+          {/* 左侧：移动端菜单 + 品牌名 + 桌面端顶层域导航 */}
+          <div className="flex items-center gap-3 sm:gap-6 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              aria-label="打开导航菜单"
+              className="md:hidden grid place-items-center w-8 h-8 rounded-full transition-colors"
+              style={{ color: 'var(--ink)' }}
+            >
+              <MenuOutlined style={{ fontSize: 15 }} />
+            </button>
 
-      {/* 移动端抽屉导航 */}
+            <button
+              type="button"
+              onClick={() => handleNavClick('/')}
+              className="flex items-center gap-2 shrink-0 text-left bg-transparent border-0 p-0 cursor-pointer"
+              aria-label="返回 DocQA 工作台"
+            >
+              <span
+                className="grid place-items-center w-6 h-6 rounded-[7px] text-[12px] font-semibold tracking-tight"
+                style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+              >
+                D
+              </span>
+              <span
+                className="text-[15px] font-semibold tracking-[-0.02em]"
+                style={{ color: 'var(--ink)' }}
+              >
+                DocQA
+              </span>
+            </button>
+
+            <nav className="hidden md:flex items-center gap-1" aria-label="顶层域导航">
+              {topNavItems.map((item) => {
+                const active = isNavActive(item);
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    data-active={active}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => handleNavClick(item.key)}
+                    className="top-nav-link"
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* 右侧：命令面板触发器 + 主题切换 + 用户菜单 */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              aria-label="打开快速跳转命令面板"
+              className="flex items-center gap-2 h-8 px-2.5 sm:px-3 rounded-full text-[12.5px] transition-colors cursor-pointer"
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                color: 'var(--ink-2)',
+              }}
+            >
+              <SearchOutlined style={{ fontSize: 12.5 }} />
+              <span className="hidden sm:inline">快速跳转</span>
+              <kbd className="kbd-chip hidden sm:inline-flex">⌘K</kbd>
+            </button>
+
+            <Tooltip title={isDark ? '切换为浅色模式' : '切换为暗色模式'}>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                aria-label={isDark ? '切换为浅色模式' : '切换为暗色模式'}
+                className="grid place-items-center w-8 h-8 rounded-full transition-colors cursor-pointer"
+                style={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--ink)',
+                }}
+              >
+                {isDark ? (
+                  <SunOutlined style={{ fontSize: 13.5 }} />
+                ) : (
+                  <MoonOutlined style={{ fontSize: 13.5 }} />
+                )}
+              </button>
+            </Tooltip>
+
+            <Dropdown
+              menu={{ items: dropdownItems }}
+              placement="bottomRight"
+              trigger={['click']}
+            >
+              <button
+                type="button"
+                aria-label="打开用户菜单"
+                className="flex items-center gap-2 h-8 pl-1 pr-2.5 rounded-full transition-colors cursor-pointer"
+                style={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--ink)',
+                }}
+              >
+                <Avatar
+                  size={22}
+                  src={user?.avatar || undefined}
+                  style={{
+                    backgroundColor: 'var(--accent)',
+                    color: 'var(--accent-ink)',
+                    fontSize: 11,
+                  }}
+                  icon={!user?.avatar ? <UserOutlined /> : undefined}
+                />
+                <span className="hidden sm:inline text-[12.5px] font-medium max-w-[100px] truncate">
+                  {displayName}
+                </span>
+              </button>
+            </Dropdown>
+          </div>
+        </div>
+      </header>
+
+      {/* 移动端导航抽屉（仅展示顶层域 + 个人中心） */}
       <Drawer
         placement="left"
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
-        width={240}
-        styles={{ body: { padding: 0 } }}
-        closable={false}
+        width={260}
+        title="DocQA"
       >
-        {sidebarContent}
+        <nav className="flex flex-col gap-1" aria-label="移动端主导航">
+          {topNavItems.map((item) => {
+            const active = isNavActive(item);
+            return (
+              <button
+                key={item.key}
+                type="button"
+                data-active={active}
+                onClick={() => handleNavClick(item.key)}
+                className="w-full flex items-center justify-between px-3 py-2.5 rounded-[12px] text-[14px] font-medium text-left transition-colors"
+                style={{
+                  background: active ? 'var(--surface)' : 'transparent',
+                  color: active ? 'var(--ink)' : 'var(--ink-2)',
+                }}
+              >
+                <span>{item.label}</span>
+                <RightOutlined style={{ fontSize: 11, opacity: 0.45 }} />
+              </button>
+            );
+          })}
+
+          <div className="my-3" style={{ borderTop: '1px solid var(--border)' }} />
+
+          <button
+            type="button"
+            onClick={() => handleNavClick('/account/profile')}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[12px] text-[14px] text-left"
+            style={{ color: 'var(--ink-2)' }}
+          >
+            <UserOutlined />
+            <span>个人中心</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[12px] text-[14px] text-left"
+            style={{ color: 'var(--status-danger)' }}
+          >
+            <LogoutOutlined />
+            <span>退出登录</span>
+          </button>
+        </nav>
       </Drawer>
 
-      {/* 右侧主画布 */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {/* Night Nav 顶栏 */}
-        <header className="h-[72px] shrink-0 px-4 md:px-6 flex items-center justify-between bg-white/[0.04] backdrop-blur-[24px] backdrop-saturate-[180%] border-b border-white/[0.10] min-w-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              onClick={() => setMobileMenuOpen(true)}
-              aria-label="打开菜单"
-              className="md:hidden grid place-items-center w-9 h-9 rounded-[12px] text-moon-light hover:bg-white/10 hover:text-white"
-            >
-              <MenuOutlined />
-            </button>
-            <div className="flex items-baseline gap-3 min-w-0">
-              <h1 className="text-[16px] font-medium text-white truncate">{meta.title}</h1>
-              <span className="hidden sm:inline text-[13px] text-moon-light truncate">
-                {meta.desc}
-              </span>
+      {/* 主内容区域 */}
+      <main id="main-content" className="flex-1 min-w-0 flex flex-col">
+        <div
+          className={`mx-auto w-full min-w-0 px-4 sm:px-6 ${
+            isChatRoute ? 'max-w-[1360px] py-4 flex-1 flex flex-col' : 'max-w-[1160px] py-6 sm:py-8'
+          }`}
+        >
+          {/* 二级/三级页面统一面包屑与返回上级 */}
+          {breadcrumbData && (
+            <div className="mb-4 sm:mb-5 flex items-center justify-between gap-3 flex-wrap">
+              <nav
+                aria-label="当前位置"
+                className="flex items-center gap-2 text-[12.5px] min-w-0"
+                style={{ color: 'var(--ink-2)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => navigate(breadcrumbData.parentPath)}
+                  className="inline-flex items-center gap-1 h-7 px-2.5 rounded-full transition-colors cursor-pointer shrink-0"
+                  style={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--ink)',
+                  }}
+                >
+                  <ArrowLeftOutlined style={{ fontSize: 11 }} />
+                  <span>返回</span>
+                </button>
+
+                <ol className="flex items-center gap-1.5 m-0 p-0 list-none min-w-0 overflow-hidden">
+                  {breadcrumbData.crumbs.map((crumb, idx) => {
+                    const isLast = idx === breadcrumbData.crumbs.length - 1;
+                    return (
+                      <li key={crumb.label} className="flex items-center gap-1.5 min-w-0">
+                        {idx > 0 && (
+                          <span aria-hidden style={{ color: 'var(--ink-3)' }}>
+                            /
+                          </span>
+                        )}
+                        {crumb.path && !isLast ? (
+                          <button
+                            type="button"
+                            onClick={() => navigate(crumb.path!)}
+                            className="bg-transparent border-0 p-0 cursor-pointer hover:underline truncate"
+                            style={{ color: 'var(--ink-2)' }}
+                          >
+                            {crumb.label}
+                          </button>
+                        ) : (
+                          <span
+                            className="font-medium truncate"
+                            style={{ color: 'var(--ink)' }}
+                            aria-current={isLast ? 'page' : undefined}
+                          >
+                            {crumb.label}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </nav>
             </div>
-          </div>
+          )}
 
-          <Dropdown menu={{ items: dropdownItems }} placement="bottomRight" trigger={['click']}>
-            <button className="flex items-center gap-2.5 h-10 px-3 rounded-full bg-white/[0.05] hover:bg-white/[0.12] border border-white/[0.12] transition-all duration-500 ease-liquid shrink-0">
-              <Avatar
-                size={26}
-                src={user?.avatar || undefined}
-                className="!bg-white/10 !text-champagne"
-                icon={!user?.avatar ? <UserOutlined /> : undefined}
-              />
-              <span className="hidden sm:inline text-[13px] text-white/90 max-w-[120px] truncate">
-                {user?.nickname || user?.username || '用户'}
-              </span>
-            </button>
-          </Dropdown>
-        </header>
+          <Outlet />
+        </div>
+      </main>
 
-        <main id="main-content" className="flex-1 min-w-0 min-h-0 overflow-y-auto overflow-x-hidden">
-          <div className="mx-auto w-full max-w-[1280px] min-w-0 px-4 md:px-6 py-6">
-            <Outlet />
-          </div>
-        </main>
-      </div>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        isAdmin={isAdmin}
+      />
     </div>
   );
 }
